@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
-import { buildFeedback } from "../src/shared/feedback.ts";
+import { countSpokenWords, DEFAULT_FILLERS } from "../src/shared/fillers.ts";
+import { answerCounts, buildNarrative, extractQaPairs, judgeHeuristic, JUDGE_INSTRUCTIONS, longestHelpfulStreak } from "../src/shared/qa.ts";
+import { computeWpm } from "../src/shared/wpm.ts";
 import { mergePhrases } from "../src/shared/memory.ts";
 import { mockTutorReply } from "../src/shared/mockTutor.ts";
 import { PatienceController } from "../src/shared/patience.ts";
@@ -93,18 +95,46 @@ describe("stuck expressions and feedback", () => {
     expect(japanese?.reasons).toEqual(expect.arrayContaining(["japanese", "hesitation", "long_pause", "hint_needed"]));
   });
 
-  test("keeps feedback to one or two notes and skips a score", () => {
-    const stuck = detectStuck({ text: "えーと、営業です", pauseMs: 8000, hintShown: true });
-    const items = buildFeedback(["I go to the office yesterday", "えーと、営業です"], stuck ? [{ ...stuck, id: "1" }] : []);
-    expect(items.length).toBeGreaterThan(0);
-    expect(items.length).toBeLessThanOrEqual(2);
-    for (const item of items) {
-      expect(item.detailJa).not.toMatch(/点数|score|減点/i);
-    }
-    expect(items.some((item) => item.category === "grammar")).toBe(true);
-    const empty = buildFeedback(["I worked in sales for three years."], []);
-    expect(empty).toHaveLength(1);
-    expect(empty[0]?.titleJa).toContain("増やしません");
+  test("scores answers without lowering them for grammar, and keeps WPM undefined in text mode", () => {
+    expect(countSpokenWords("um I uh went to the umbrella shop", DEFAULT_FILLERS)).toBe(6);
+    expect(countSpokenWords("えーと、営業です", DEFAULT_FILLERS)).toBe(0);
+    const turns = [
+      { id: "q1", role: "ai" as const, text: "Where did you go yesterday?", isHint: false, finality: "final" as const },
+      { id: "a1", role: "learner" as const, text: "he go to school yesterday", isHint: false, finality: "final" as const },
+      { id: "q2", role: "ai" as const, text: "What did you study?", isHint: false, finality: "final" as const },
+      { id: "a2", role: "learner" as const, text: "um", isHint: false, finality: "final" as const },
+      { id: "a3", role: "learner" as const, text: "partial text", isHint: false, finality: "partial" as const },
+    ];
+    const pairs = extractQaPairs(turns);
+    expect(pairs.map((pair) => pair.answer)).toEqual(["he go to school yesterday", "um"]);
+    const judged = judgeHeuristic(pairs, DEFAULT_FILLERS);
+    expect(judged.pairs.map((pair) => pair.level)).toEqual(["answers", "no_answer"]);
+    expect(judged.source).toBe("heuristic");
+    expect(longestHelpfulStreak(["answers", "partial", "off_topic", "answers", "partial"])).toBe(2);
+    expect(answerCounts(["answers", "partial", "answers"])).toEqual({ answers: 2, total: 3 });
+    const narrative = buildNarrative({ levels: judged.pairs.map((pair) => pair.level), learnerAskedOrExpanded: false });
+    expect(narrative.improvements.length).toBeGreaterThan(0);
+    expect(narrative.improvements.length).toBeLessThanOrEqual(2);
+    expect(`${narrative.strength} ${narrative.improvements.join(" ")}`).not.toMatch(/発音|流暢|文法を直し|点数|減点/);
+    expect(JUDGE_INSTRUCTIONS).toMatch(/must NOT lower the level/i);
+    expect(JUDGE_INSTRUCTIONS).toMatch(/pronunciation/i);
+    const textMode = computeWpm({ mode: "mock", turns, spans: [{ itemId: "a1", startMs: 0, endMs: 60_000 }], fillers: DEFAULT_FILLERS });
+    expect(textMode.available).toBe(false);
+    expect(textMode.speakingWpm).toBeNull();
+    const voice = computeWpm({
+      mode: "voice",
+      turns,
+      spans: [
+        { itemId: "a1", startMs: 0, endMs: 30_000 },
+        { itemId: "a2", startMs: 90_000, endMs: 120_000 },
+      ],
+      fillers: DEFAULT_FILLERS,
+    });
+    expect(voice.wordCount).toBe(5);
+    expect(voice.speakingMs).toBe(60_000);
+    expect(voice.overallMs).toBe(120_000);
+    expect(voice.speakingWpm).toBeCloseTo(5);
+    expect(voice.overallWpm).toBeCloseTo(2.5);
   });
 
   test("merges phrases with the newest first", () => {

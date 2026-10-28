@@ -4,13 +4,23 @@ import { SetupScreen } from "./components/SetupScreen.tsx";
 import { TalkScreen } from "./components/TalkScreen.tsx";
 import { clearPhrases, loadPhrases } from "./shared/memory.ts";
 import { defaultSettings } from "./shared/scenarios.ts";
-import type { ChatTurn, FeedbackItem, PublicConfig, SessionSettings, StuckExpression } from "./shared/types.ts";
+import type { QaPair } from "./shared/qa.ts";
+import type { ChatTurn, PublicConfig, SessionSettings, StuckExpression } from "./shared/types.ts";
+import type { SpeechSpan } from "./shared/wpm.ts";
 import { useConversation, type TalkSession } from "./useConversation.ts";
 
 type Phase =
   | { name: "setup" }
   | { name: "talk"; session: TalkSession }
-  | { name: "review"; settings: SessionSettings; turns: ChatTurn[]; stuck: StuckExpression[]; feedback: FeedbackItem[] };
+  | {
+      name: "review";
+      settings: SessionSettings;
+      mode: "mock" | "voice";
+      turns: ChatTurn[];
+      stuck: StuckExpression[];
+      pairs: QaPair[];
+      speechSpans: SpeechSpan[];
+    };
 
 export function App() {
   const [config, setConfig] = useState<PublicConfig | null>(null);
@@ -56,7 +66,7 @@ export function App() {
           onSend={live.sendDraft}
           onEnd={() => {
             const snapshot = live.endConversation();
-            setPhase({ name: "review", settings: phase.session.settings, ...snapshot });
+            setPhase({ name: "review", settings: phase.session.settings, mode: phase.session.mode, ...snapshot });
           }}
         />
       </main>
@@ -68,9 +78,12 @@ export function App() {
       <main>
         <ReviewScreen
           settings={phase.settings}
+          mode={phase.mode}
           turns={phase.turns}
           stuck={phase.stuck}
-          feedback={phase.feedback}
+          pairs={phase.pairs}
+          speechSpans={phase.speechSpans}
+          fillers={config?.fillers ?? []}
           onSaved={setPhrases}
           onAgain={() => setPhase({ name: "setup" })}
         />

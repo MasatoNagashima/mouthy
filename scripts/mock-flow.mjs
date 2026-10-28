@@ -64,10 +64,11 @@ try {
   await page.screenshot({ path: path.join(outDir, "mouthy_conversation.png"), fullPage: true });
 
   await clickText(page, "会話を終えて振り返る");
-  await page.waitForFunction(() => document.body.innerText.includes("日本語から英語へ戻す"));
+  await page.waitForFunction(() => document.body.innerText.includes("算出不可"));
+  await page.waitForFunction(() => document.body.innerText.includes("簡易判定"));
   await page.waitForFunction(() => document.body.innerText.includes("詰まった表現"));
   const feedbackCount = await page.evaluate(() => document.querySelectorAll("[data-testid=feedback] li").length);
-  if (feedbackCount < 1 || feedbackCount > 2) throw new Error(`expected 1-2 feedback items, saw ${feedbackCount}`);
+  if (feedbackCount < 2 || feedbackCount > 3) throw new Error(`expected 1 strength and 1-2 improvements, saw ${feedbackCount}`);
   const review = await page.evaluate(() => document.body.innerText);
   if (!review.includes("えーと、営業です") || !review.includes("日本語への切り替え")) {
     throw new Error("stuck expression was not listed");

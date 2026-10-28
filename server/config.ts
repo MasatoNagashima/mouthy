@@ -1,3 +1,4 @@
+import { parseFillerList } from "../src/shared/fillers.ts";
 import type { PublicConfig } from "../src/shared/types.ts";
 
 export type AppConfig = {
@@ -8,6 +9,8 @@ export type AppConfig = {
   openaiTranscribeModel: string;
   openaiVoice: string;
   geminiLiveModel: string;
+  openaiJudgeModel: string;
+  fillers: string[];
   port: number;
 };
 
@@ -21,6 +24,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     openaiTranscribeModel: (env.OPENAI_TRANSCRIBE_MODEL ?? "").trim() || "gpt-4o-mini-transcribe",
     openaiVoice: (env.OPENAI_VOICE ?? "").trim() || "marin",
     geminiLiveModel: (env.GEMINI_LIVE_MODEL ?? "").trim() || "gemini-3.8-live",
+    openaiJudgeModel: (env.OPENAI_JUDGE_MODEL ?? "").trim() || "gpt-5.4-mini",
+    fillers: parseFillerList(env.FILLER_WORDS),
     port: Number(env.PORT) > 0 ? Number(env.PORT) : 8787,
   };
 }
@@ -43,6 +48,8 @@ export function toPublicConfig(config: AppConfig): PublicConfig {
     voice: config.voiceProvider === "openai" ? config.openaiVoice : null,
     voiceReady,
     browserVoiceImplemented,
+    judgeModel: config.openaiJudgeModel,
+    fillers: config.fillers,
     message,
   };
 }

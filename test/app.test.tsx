@@ -53,10 +53,12 @@ test("mock flow records a stuck phrase and reuses it next time", async () => {
   expect(aiTurns.some((text) => text.includes("What would you like to try?"))).toBe(true);
   expect(screen.getByTestId("transcript").textContent).not.toMatch(/点数|評価/);
   fireEvent.click(screen.getByRole("button", { name: "会話を終えて振り返る" }));
-  expect(await screen.findByTestId("feedback")).toBeTruthy();
+  expect((await screen.findByTestId("wpm-unavailable")).textContent).toContain("算出不可");
+  expect(screen.getByText(/簡易判定/)).toBeTruthy();
   const feedback = screen.getByTestId("feedback");
-  expect(feedback.querySelectorAll("li").length).toBeLessThanOrEqual(2);
-  expect(feedback.textContent).toContain("日本語から英語へ戻す");
+  expect(feedback.querySelectorAll("li").length).toBeGreaterThanOrEqual(2);
+  expect(feedback.querySelectorAll("li").length).toBeLessThanOrEqual(3);
+  expect(feedback.textContent).not.toMatch(/発音|文法/);
   expect(screen.getByTestId("stuck-list").textContent).toContain("えーと、営業です");
   expect(screen.getByTestId("stuck-list").textContent).toContain("日本語への切り替え");
   fireEvent.click(screen.getByRole("button", { name: "もう一度" }));

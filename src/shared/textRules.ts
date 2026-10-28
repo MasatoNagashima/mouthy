@@ -1,3 +1,5 @@
+import { countFillerHits, DEFAULT_FILLERS, removeFillers } from "./fillers.ts";
+
 const BANNED_DURING_CONVERSATION =
   /\b(score|grade|points|incorrect|wrong|mistake)s?\b|評価|点数|減点|間違い/i;
 
@@ -24,12 +26,8 @@ export function japaneseSnippet(text: string): string {
   return clip((parts ?? []).join(""), 40);
 }
 
-function fillerPattern(): RegExp {
-  return /\b(um+|uh+|erm+|hmm+|er+)\b|えーと|えっと|あのー?|そのー?|うーん/gi;
-}
-
 export function fillerCount(text: string): number {
-  return text.match(fillerPattern())?.length ?? 0;
+  return countFillerHits(text, DEFAULT_FILLERS);
 }
 
 export function isHesitationHeavy(text: string): boolean {
@@ -37,10 +35,7 @@ export function isHesitationHeavy(text: string): boolean {
     return true;
   }
   const fillers = fillerCount(text);
-  const stripped = text
-    .replace(fillerPattern(), " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const stripped = removeFillers(text, DEFAULT_FILLERS).replace(/\s+/g, " ").trim();
   if (fillers >= 2 && stripped.length < 24) return true;
   if (fillers >= 1 && stripped.length < 8) return true;
   return false;
