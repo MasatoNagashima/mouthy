@@ -1,0 +1,112 @@
+:root {
+  color-scheme: light;
+  --paper: #f3efe6;
+  --ink: #221c16;
+  --muted: #5e564c;
+  --line: #e4d8c6;
+  --card: #fffdf8;
+  --green: #1d6b4a;
+  --green-ink: #f4fff8;
+  --user: #e7f3ec;
+  --hint: #f8f1df;
+  --bad: #8c3d32;
+  --shadow: 0 16px 40px rgba(60, 42, 20, 0.06);
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Yu Mincho", "Hiragino Mincho ProN", serif;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(29, 107, 74, 0.08), transparent 32rem),
+    var(--paper);
+  color: var(--ink);
+}
+button, input, textarea, select, label, legend, summary {
+  font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+  font-size: 1rem;
+  color: inherit;
+}
+button, input, textarea, select { border-radius: 12px; }
+button {
+  background: var(--green);
+  color: var(--green-ink);
+  border: 0;
+  min-height: 48px;
+  padding: 0.7rem 1.1rem;
+  cursor: pointer;
+}
+button:disabled { cursor: not-allowed; opacity: 0.45; }
+button.secondary { background: transparent; color: var(--green); border: 1px solid var(--green); }
+button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 3px solid var(--green);
+  outline-offset: 2px;
+}
+main { max-width: 880px; margin: 0 auto; padding: 32px 20px 64px; }
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: 28px; padding: 28px; box-shadow: var(--shadow); }
+.eyebrow { letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.78rem; color: var(--green); margin: 0 0 0.4rem; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; }
+h1 { font-size: clamp(2.2rem, 5vw, 3.4rem); line-height: 1.05; margin: 0 0 0.6rem; font-weight: 560; }
+h2 { font-size: 1.35rem; margin: 1.6rem 0 0.6rem; }
+h3 { margin: 0.2rem 0; font-size: 1.15rem; }
+.lede, .hint, .status, .points, p { font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif; }
+.lede { font-size: 1.12rem; line-height: 1.7; margin-top: 0; }
+.hint { color: var(--muted); font-size: 0.92rem; }
+.points { padding-left: 1.2rem; line-height: 1.6; }
+.banner { border-radius: 16px; padding: 0.9rem 1rem; background: var(--hint); line-height: 1.6; }
+.banner.ok { background: var(--user); }
+.banner.bad { background: #fdeceb; color: var(--bad); }
+fieldset { border: 0; margin: 1.2rem 0; padding: 0; }
+legend { font-weight: 700; margin-bottom: 0.6rem; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; }
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.choice { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: #fff; }
+.choice:has(input:checked) { border-color: var(--green); background: var(--user); }
+.choice span { display: flex; flex-direction: column; gap: 0.2rem; }
+.choice small { color: var(--muted); font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; }
+.field, .grid { display: flex; flex-direction: column; gap: 0.35rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
+.field input, .field textarea, .field select, .composer textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 0.75rem 0.8rem;
+}
+.inline { display: flex; gap: 0.6rem; align-items: flex-start; margin: 0.45rem 0; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; }
+.consent { line-height: 1.5; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+details { margin: 12px 0; }
+summary { cursor: pointer; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; }
+.prompt { white-space: pre-wrap; background: #1f1a14; color: #f6f1e7; border-radius: 16px; padding: 16px; overflow: auto; font-size: 0.82rem; line-height: 1.5; }
+.saved { background: var(--hint); border-radius: 18px; padding: 12px 16px; }
+.saved ul, .stuck { padding-left: 1.1rem; }
+.talk-bar, .composer { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.talk-bar h1 { font-size: 2rem; }
+.status { display: flex; flex-direction: column; gap: 0.2rem; background: var(--user); border-radius: 16px; padding: 0.8rem 1rem; }
+.hint-inline { color: var(--muted); font-size: 0.85rem; }
+.backchannel { display: inline-block; margin: 8px 0; padding: 0.35rem 0.7rem; border-radius: 999px; background: var(--hint); }
+.transcript { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px; min-height: 240px; }
+.transcript li { max-width: 36rem; border-radius: 18px; padding: 12px 14px; }
+.transcript .ai { background: #fff; border: 1px solid var(--line); }
+.transcript .learner { background: var(--user); margin-left: auto; }
+.transcript span, .feedback span { font-size: 0.78rem; letter-spacing: 0.04em; color: var(--muted); font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; }
+.transcript em { margin-left: 8px; font-style: normal; color: #8a5a12; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; font-size: 0.85rem; }
+.transcript p, .feedback p, .stuck p { margin: 0.25rem 0; line-height: 1.55; }
+.composer { align-items: stretch; margin-top: 12px; }
+.composer label { flex: 1; }
+.feedback, .stuck { display: flex; flex-direction: column; gap: 10px; padding: 0; list-style: none; }
+.feedback li, .stuck li { border: 1px solid var(--line); border-radius: 18px; padding: 14px; background: #fff; }
+.stuck small { display: block; color: var(--muted); font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+@media (max-width: 720px) {
+  .talk-bar, .composer, .actions { flex-direction: column; align-items: stretch; }
+  .transcript .learner { margin-left: 0; }
+}
