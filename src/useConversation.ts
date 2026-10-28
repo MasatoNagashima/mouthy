@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { confirmedLearnerTexts } from "./shared/captions.ts";
-import { buildFeedback } from "./shared/feedback.ts";
 import { mockTutorReply } from "./shared/mockTutor.ts";
+import { extractQaPairs } from "./shared/qa.ts";
+import type { SpeechSpan } from "./shared/wpm.ts";
 import { PatienceController } from "./shared/patience.ts";
 import { buildHintInstructions, speedForLevel } from "./shared/prompt.ts";
 import { LISTEN_BACKCHANNEL_MS, LONG_PAUSE_MS, WAIT_REASSURANCE_MS } from "./shared/scenarios.ts";
 import { speakEnglish, stopSpeaking } from "./shared/speech.ts";
 import { detectStuck } from "./shared/stuck.ts";
-import type { ChatTurn, FeedbackItem, SessionSettings, StuckExpression, TalkStatus } from "./shared/types.ts";
+import type { ChatTurn, SessionSettings, StuckExpression, TalkStatus } from "./shared/types.ts";
 import { initialProtoState, markNextResponseAsHint, reduceRealtimeEvent, type ProtoState } from "./voice/events.ts";
 import { OpenAIRealtimeSession } from "./voice/openaiRealtime.ts";
 
@@ -21,7 +21,8 @@ export type TalkSession = {
 type Snapshot = {
   turns: ChatTurn[];
   stuck: StuckExpression[];
-  feedback: FeedbackItem[];
+  pairs: ReturnType<typeof extractQaPairs>;
+  speechSpans: SpeechSpan[];
 };
 
 export function useConversation(session: TalkSession | null) {
@@ -36,7 +37,7 @@ export function useConversation(session: TalkSession | null) {
   const controls = useRef({
     send: () => {},
     onDraft: (_value: string) => {},
-    end: (): Snapshot => ({ turns: [], stuck: [], feedback: [] }),
+    end: (): Snapshot => ({ turns: [], stuck: [], pairs: [], speechSpans: [] }),
   });
 
   useEffect(() => {
@@ -56,6 +57,7 @@ export function useConversation(session: TalkSession | null) {
       speak: session.speak,
     };
     const proto: { current: ProtoState } = { current: initialProtoState() };
+    const speechSpans: SpeechSpan[] = [];
     let patience: PatienceController | null = null;
     let voice: OpenAIRealtimeSession | null = null;
     let fallbackTimer = 0;
@@ -154,11 +156,12 @@ export function useConversation(session: TalkSession | null) {
       deliver(text, false);
     };
     controls.current.end = () => {
-      const learnerTexts = confirmedLearnerTexts(bag.turns);
+      const turns = bag.turns.filter((turn) => turn.text.trim() || turn.finality === "failed");
       return {
-        turns: bag.turns.filter((turn) => turn.text.trim()),
+        turns,
         stuck: bag.stuck,
-        feedback: buildFeedback(learnerTexts, bag.stuck),
+        pairs: extractQaPairs(turns),
+        speechSpans: speechSpans.map((span) => ({ ...span })),
       };
     };
 
@@ -217,8 +220,14 @@ export function useConversation(session: TalkSession | null) {
                 }, 8000);
               } else if (effect.type === "user_speech_started") {
                 bag.speechStartedAt = Date.now();
+                const existing = speechSpans.find((span) => span.itemId === effect.itemId);
+                if (existing) existing.startMs = effect.audioStartMs;
+                else speechSpans.push({ itemId: effect.itemId, startMs: effect.audioStartMs, endMs: null });
                 patience?.userSpeechStarted();
               } else if (effect.type === "user_speech_stopped") {
+                const existing = speechSpans.find((span) => span.itemId === effect.itemId);
+                if (existing) existing.endMs = effect.audioEndMs;
+                else speechSpans.push({ itemId: effect.itemId, startMs: null, endMs: effect.audioEndMs });
                 patience?.userSpeechStopped();
               } else if (effect.type === "learner_utterance") {
                 const pauseMs =

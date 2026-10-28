@@ -144,6 +144,67 @@ describe("token server", () => {
     expect(JSON.stringify(direct)).toContain("END_SENSITIVITY_LOW");
     expect(JSON.stringify(buildOpenAIClientSecretBody(defaultSettings(), loadConfig({})))).toContain("gpt-realtime-2.1");
   });
+
+  test("judges answers on the server and does not call OpenAI without a key", async () => {
+    const fetchImpl: typeof fetch = async () => {
+      throw new Error("judge should not call the network without a key");
+    };
+    const noKey = await start(createApp({ config: loadConfig({}), fetchImpl }));
+    const heuristic = await fetch(`${noKey}/api/feedback/judge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pairs: [{ question: "Where did you go?", answer: "he go to school yesterday" }] }),
+    });
+    const heuristicBody = (await heuristic.json()) as { source: string; pairs: Array<{ level: string }> };
+    expect(heuristic.status).toBe(200);
+    expect(heuristicBody.source).toBe("heuristic");
+    expect(heuristicBody.pairs[0]?.level).toBe("answers");
+
+    const captured: { current: { url: string; body: { model?: string; messages?: Array<{ content?: string }> } } | null } = {
+      current: null,
+    };
+    const liveFetch: typeof fetch = async (input, init) => {
+      captured.current = {
+        url: String(input),
+        body: JSON.parse(String(init?.body)) as { model?: string; messages?: Array<{ content?: string }> },
+      };
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  pairs: [{ index: 0, level: "partial", note: "一部です。" }],
+                  learnerAskedOrExpanded: true,
+                }),
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    };
+    const base = await start(
+      createApp({
+        config: loadConfig({ OPENAI_API_KEY: "sk-test-secret", OPENAI_JUDGE_MODEL: "gpt-5.4-mini" }),
+        fetchImpl: liveFetch,
+      }),
+    );
+    const judged = await fetch(`${base}/api/feedback/judge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pairs: [{ question: "Where?", answer: "school" }] }),
+    });
+    const body = (await judged.json()) as { source: string; model: string; pairs: Array<{ level: string }>; learnerAskedOrExpanded: boolean };
+    expect(body.source).toBe("llm");
+    expect(body.model).toBe("gpt-5.4-mini");
+    expect(body.pairs[0]?.level).toBe("partial");
+    expect(body.learnerAskedOrExpanded).toBe(true);
+    expect(captured.current?.url).toBe("https://api.openai.com/v1/chat/completions");
+    expect(captured.current?.body.model).toBe("gpt-5.4-mini");
+    expect(JSON.stringify(captured.current?.body.messages)).toMatch(/must NOT lower the level/);
+    expect(JSON.stringify(captured.current?.body)).not.toContain("sk-test-secret");
+  });
 });
 
 describe("browser bundle boundary", () => {

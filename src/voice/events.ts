@@ -7,8 +7,8 @@ const PENDING_PREFIX = "pending-learner";
 export type RealtimeEffect =
   | { type: "ai_started" }
   | { type: "ai_finished" }
-  | { type: "user_speech_started" }
-  | { type: "user_speech_stopped" }
+  | { type: "user_speech_started"; itemId: string; audioStartMs: number | null }
+  | { type: "user_speech_stopped"; itemId: string; audioEndMs: number | null }
   | { type: "learner_utterance"; text: string; itemId: string }
   | { type: "error"; message: string }
   | { type: "notice"; message: string }
@@ -74,6 +74,11 @@ export function extractTranscript(response: unknown): string {
 function textField(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   return typeof value === "string" ? value : "";
+}
+
+function numberOrNull(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function readMessage(value: unknown): { id: string; role: string } | null {
@@ -322,20 +327,26 @@ export function reduceRealtimeEvent(state: ProtoState, event: unknown): { state:
       return { state: next, effects };
     }
     case "input_audio_buffer.speech_started": {
-      effects.push({ type: "user_speech_started" });
-      const itemId = textField(record, "item_id");
-      if (!itemId) {
+      const audioStartMs = numberOrNull(record, "audio_start_ms");
+      const rawId = textField(record, "item_id");
+      if (!rawId) {
         if (state.openLearnerId && state.turns.some((turn) => turn.id === state.openLearnerId && turn.finality === "partial")) {
+          effects.push({ type: "user_speech_started", itemId: state.openLearnerId, audioStartMs });
           return { state, effects };
         }
         const count = state.turns.filter((turn) => isPendingId(turn.id)).length;
-        return { state: ensureLearner(state, `${PENDING_PREFIX}-${count}`), effects };
+        const itemId = `${PENDING_PREFIX}-${count}`;
+        effects.push({ type: "user_speech_started", itemId, audioStartMs });
+        return { state: ensureLearner(state, itemId), effects };
       }
-      return { state: ensureLearner(state, itemId), effects };
+      effects.push({ type: "user_speech_started", itemId: rawId, audioStartMs });
+      return { state: ensureLearner(state, rawId), effects };
     }
-    case "input_audio_buffer.speech_stopped":
-      effects.push({ type: "user_speech_stopped" });
+    case "input_audio_buffer.speech_stopped": {
+      const itemId = textField(record, "item_id") || state.openLearnerId || "";
+      effects.push({ type: "user_speech_stopped", itemId, audioEndMs: numberOrNull(record, "audio_end_ms") });
       return { state, effects };
+    }
     case "input_audio_buffer.committed": {
       const itemId = textField(record, "item_id");
       if (!itemId) return { state, effects };

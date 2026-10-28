@@ -1,7 +1,10 @@
 import express, { type Express, type Request, type Response } from "express";
 import path from "node:path";
+import { parseFillerList } from "../src/shared/fillers.ts";
+import type { QaPair } from "../src/shared/qa.ts";
 import { parseSessionSettings, SettingsError } from "../src/shared/scenarios.ts";
 import { loadConfig, toPublicConfig, type AppConfig } from "./config.ts";
+import { judgePairs } from "./judge.ts";
 import { mintGeminiToken, mintOpenAIToken, sanitizeUpstream } from "./providers.ts";
 
 export type AppDeps = {
@@ -56,6 +59,22 @@ export function createApp(deps: AppDeps = {}): Express {
     }
   });
 
+  app.post("/api/feedback/judge", async (req, res) => {
+    const pairs = parseJudgePairs(req.body);
+    if (!pairs) {
+      res.status(400).json({ error: "bad_pairs", message: "質問と答えの組が不正です。" });
+      return;
+    }
+    const result = await judgePairs({
+      pairs,
+      fillers: config.fillers.length > 0 ? config.fillers : parseFillerList(null),
+      apiKey: config.openaiApiKey,
+      model: config.openaiJudgeModel,
+      fetchImpl,
+    });
+    res.json(result);
+  });
+
   app.post("/api/providers/gemini/token", async (req, res) => {
     if (!config.geminiApiKey) {
       res.status(503).json({
@@ -104,4 +123,22 @@ export function createApp(deps: AppDeps = {}): Express {
   }
 
   return app;
+}
+
+function parseJudgePairs(body: unknown): QaPair[] | null {
+  if (!body || typeof body !== "object") return null;
+  const pairs = (body as { pairs?: unknown }).pairs;
+  if (!Array.isArray(pairs) || pairs.length > 40) return null;
+  const parsed: QaPair[] = [];
+  for (const item of pairs) {
+    if (!item || typeof item !== "object") return null;
+    const record = item as { question?: unknown; answer?: unknown };
+    if (typeof record.question !== "string" || typeof record.answer !== "string") return null;
+    parsed.push({
+      index: parsed.length,
+      question: record.question.slice(0, 2000),
+      answer: record.answer.slice(0, 2000),
+    });
+  }
+  return parsed;
 }

@@ -40,15 +40,6 @@ export type StuckExpression = {
   pauseMs: number | null;
 };
 
-export type FeedbackCategory = "grammar" | "expression";
-
-export type FeedbackItem = {
-  category: FeedbackCategory;
-  titleJa: string;
-  detailJa: string;
-  quote?: string;
-};
-
 export type PublicConfig = {
   provider: "openai" | "gemini";
   model: string;
@@ -56,6 +47,8 @@ export type PublicConfig = {
   voice: string | null;
   voiceReady: boolean;
   browserVoiceImplemented: boolean;
+  judgeModel: string;
+  fillers: string[];
   message: string | null;
 };
 
