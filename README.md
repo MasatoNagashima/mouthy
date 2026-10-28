@@ -114,6 +114,12 @@ npm run build
 
 `npm test` は API キーなしで通ります。会話ルール、ヒントの待ち、トークン発行（通信はモック）、画面のモックフローを見ます。
 
+`npm run dev` を起動した状態で、Chrome がある環境なら次でも同じ流れを通します。
+
+```bash
+node scripts/mock-flow.mjs
+```
+
 ## なぜ OpenAI Realtime を本命にしたか
 
 PRD は Gemini 3.8 Live と gpt-realtime-2.1 の両方を候補にしています。このデモのブラウザ音声は OpenAI Realtime だけを実装しました。
