@@ -46,6 +46,7 @@ test("mock flow records a stuck phrase and reuses it next time", async () => {
   fireEvent.change(screen.getByPlaceholderText(/英語で話してみてください/), {
     target: { value: "えーと、営業です" },
   });
+  expect(screen.getByTestId("live-caption").textContent).toContain("えーと、営業です");
   fireEvent.click(screen.getByRole("button", { name: "送る" }));
   expect(await screen.findByText("えーと、営業です")).toBeTruthy();
   const aiTurns = screen.getAllByTestId("ai-turn").map((node) => node.textContent ?? "");

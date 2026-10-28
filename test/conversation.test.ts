@@ -8,7 +8,8 @@ import { defaultSettings, parseSessionSettings } from "../src/shared/scenarios.t
 import { detectStuck } from "../src/shared/stuck.ts";
 import { containsBannedJudgement, questionCount } from "../src/shared/textRules.ts";
 import type { LevelId, ScenarioId } from "../src/shared/types.ts";
-import { initialProtoState, markNextResponseAsHint, reduceRealtimeEvent, type RealtimeEffect } from "../src/voice/events.ts";
+import { confirmedLearnerTexts, partitionTurns } from "../src/shared/captions.ts";
+import { initialProtoState, markNextResponseAsHint, reduceRealtimeEvent, UNRECOGNIZED_LEARNER, type RealtimeEffect } from "../src/voice/events.ts";
 
 const scenarios: ScenarioId[] = ["interview", "daily", "business", "travel", "warmup"];
 const levels: LevelId[] = ["beginner", "intermediate", "advanced"];
@@ -226,5 +227,83 @@ describe("realtime events", () => {
     state = reduceRealtimeEvent(state, { type: "response.created", response: { id: "resp_2" } }).state;
     const done = reduceRealtimeEvent(state, { type: "response.done", response: { id: "resp_2", status: "cancelled" } });
     expect(done.effects).toEqual([]);
+  });
+
+  test("keeps AI, learner, AI order when the learner transcript arrives last", () => {
+    let state = initialProtoState();
+    const effects: RealtimeEffect[] = [];
+    const steps = [
+      { type: "response.output_audio_transcript.done", response_id: "resp_greet", transcript: "Could you tell me about yourself?" },
+      { type: "input_audio_buffer.speech_started", item_id: "item_user" },
+      { type: "response.created", response: { id: "resp_reply" } },
+      { type: "response.output_audio_transcript.delta", response_id: "resp_reply", delta: "What " },
+      { type: "response.output_audio_transcript.delta", response_id: "resp_reply", delta: "happened next?" },
+      { type: "conversation.item.input_audio_transcription.delta", item_id: "item_user", delta: "I " },
+      { type: "conversation.item.input_audio_transcription.delta", item_id: "item_user", delta: "work" },
+      { type: "response.output_audio_transcript.done", response_id: "resp_reply", transcript: "What happened next?" },
+      { type: "conversation.item.input_audio_transcription.completed", item_id: "item_user", transcript: "I work in sales." },
+    ];
+    for (const event of steps) {
+      const next = reduceRealtimeEvent(state, event);
+      state = next.state;
+      effects.push(...next.effects);
+    }
+    expect(state.turns.map((turn) => turn.id)).toEqual(["resp_greet", "item_user", "resp_reply"]);
+    expect(state.turns.map((turn) => turn.role)).toEqual(["ai", "learner", "ai"]);
+    expect(state.turns[1]).toMatchObject({ text: "I work in sales.", finality: "final" });
+    expect(effects.filter((effect) => effect.type === "learner_utterance")).toEqual([
+      { type: "learner_utterance", text: "I work in sales.", itemId: "item_user" },
+    ]);
+    expect(confirmedLearnerTexts(state.turns)).toEqual(["I work in sales."]);
+    const shown = partitionTurns(state.turns);
+    expect(shown.live).toBeNull();
+    expect(shown.history.map((turn) => turn.role)).toEqual(["ai", "learner", "ai"]);
+  });
+
+  test("inserts a late learner row before the assistant reply that raced ahead", () => {
+    let state = initialProtoState();
+    const steps = [
+      { type: "response.output_audio_transcript.done", response_id: "resp_greet", transcript: "Hello." },
+      { type: "response.output_item.added", response_id: "resp_greet", item: { id: "item_greet", role: "assistant" } },
+      { type: "response.output_audio_transcript.delta", response_id: "resp_reply", delta: "What next?" },
+      {
+        type: "conversation.item.added",
+        previous_item_id: "item_greet",
+        item: { id: "item_user", role: "user" },
+      },
+      { type: "input_audio_buffer.committed", item_id: "item_user", previous_item_id: "item_greet" },
+    ];
+    for (const event of steps) state = reduceRealtimeEvent(state, event).state;
+    expect(state.turns.map((turn) => turn.id)).toEqual(["resp_greet", "item_user", "resp_reply"]);
+  });
+
+  test("streams partial learner text without treating it as confirmed, and marks failure", () => {
+    let state = initialProtoState();
+    state = reduceRealtimeEvent(state, { type: "input_audio_buffer.speech_started", item_id: "item_user" }).state;
+    const partial = reduceRealtimeEvent(state, {
+      type: "conversation.item.input_audio_transcription.delta",
+      item_id: "item_user",
+      delta: "um",
+    });
+    expect(partial.effects.some((effect) => effect.type === "learner_utterance")).toBe(false);
+    expect(confirmedLearnerTexts(partial.state.turns)).toEqual([]);
+    expect(partitionTurns(partial.state.turns).live).toMatchObject({ text: "um", finality: "partial" });
+
+    const failed = reduceRealtimeEvent(partial.state, {
+      type: "conversation.item.input_audio_transcription.failed",
+      item_id: "item_user",
+    });
+    expect(failed.state.turns[0]).toMatchObject({ text: "um", finality: "failed" });
+    expect(confirmedLearnerTexts(failed.state.turns)).toEqual([]);
+    expect(failed.effects.some((effect) => effect.type === "learner_utterance")).toBe(false);
+
+    const empty = reduceRealtimeEvent(initialProtoState(), { type: "input_audio_buffer.speech_started", item_id: "item_empty" }).state;
+    const unrecognized = reduceRealtimeEvent(empty, {
+      type: "conversation.item.input_audio_transcription.failed",
+      item_id: "item_empty",
+    });
+    expect(unrecognized.state.turns[0]).toMatchObject({ text: UNRECOGNIZED_LEARNER, finality: "failed" });
+    expect(partitionTurns(unrecognized.state.turns).history).toHaveLength(1);
+    expect(partitionTurns(unrecognized.state.turns).live).toBeNull();
   });
 });

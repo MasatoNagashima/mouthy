@@ -19,12 +19,15 @@ export type SessionSettings = {
   silenceDurationMs: number;
 };
 
+export type TurnFinality = "partial" | "final" | "failed";
+
 export type ChatTurn = {
   id: string;
   role: "ai" | "learner";
   text: string;
   isHint: boolean;
-  pending: boolean;
+  /** partial は字幕の途中。final だけを振り返りに使う。failed は聞き取れなかった行。 */
+  finality: TurnFinality;
 };
 
 export type StuckReason = "hesitation" | "japanese" | "long_pause" | "hint_needed";
