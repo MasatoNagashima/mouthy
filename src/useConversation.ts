@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { confirmedLearnerTexts } from "./shared/captions.ts";
 import { buildFeedback } from "./shared/feedback.ts";
 import { mockTutorReply } from "./shared/mockTutor.ts";
 import { PatienceController } from "./shared/patience.ts";
@@ -108,12 +109,14 @@ export function useConversation(session: TalkSession | null) {
       });
       bag.aiTurnCount += 1;
       if (hint) bag.hintShownSinceLearner = true;
+      const replyId = crypto.randomUUID();
       publishTurns([
         ...bag.turns,
-        { id: crypto.randomUUID(), role: "ai", text: reply.text, isHint: hint, pending: false },
+        { id: replyId, role: "ai", text: reply.text, isHint: hint, finality: "partial" },
       ]);
       const finish = () => {
         if (cancelled || bag.epoch !== epoch) return;
+        publishTurns(bag.turns.map((turn) => (turn.id === replyId ? { ...turn, finality: "final" } : turn)));
         current.aiFinished();
       };
       if (bag.speak) speakEnglish(reply.text, speedForLevel(bag.settings.level), finish);
@@ -144,14 +147,14 @@ export function useConversation(session: TalkSession | null) {
       const text = draftRef.current.trim();
       if (!text || session.mode !== "mock") return;
       const pauseMs = bag.aiFinishedAt ? Date.now() - bag.aiFinishedAt : 0;
-      publishTurns([...bag.turns, { id: crypto.randomUUID(), role: "learner", text, isHint: false, pending: false }]);
+      publishTurns([...bag.turns, { id: crypto.randomUUID(), role: "learner", text, isHint: false, finality: "final" }]);
       rememberLearner(text, pauseMs);
       draftRef.current = "";
       setDraft("");
       deliver(text, false);
     };
     controls.current.end = () => {
-      const learnerTexts = bag.turns.filter((turn) => turn.role === "learner").map((turn) => turn.text);
+      const learnerTexts = confirmedLearnerTexts(bag.turns);
       return {
         turns: bag.turns.filter((turn) => turn.text.trim()),
         stuck: bag.stuck,

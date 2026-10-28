@@ -1,3 +1,4 @@
+import { presentCaption } from "../shared/captions.ts";
 import { scenarioById } from "../shared/scenarios.ts";
 import type { ChatTurn, SessionSettings, TalkStatus } from "../shared/types.ts";
 
@@ -23,8 +24,20 @@ const STATUS_LABEL: Record<TalkStatus, string> = {
   error: "接続に問題があります",
 };
 
+function speakerLabel(role: ChatTurn["role"]): string {
+  return role === "ai" ? "Mouthy" : "あなた";
+}
+
+function captionText(turn: ChatTurn): string {
+  if (turn.text.trim()) return turn.text;
+  if (turn.finality === "partial") return turn.role === "learner" ? "話しています…" : "…";
+  return "";
+}
+
 export function TalkScreen(props: Props) {
   const scenario = scenarioById(props.settings.scenarioId);
+  const shown = presentCaption(props.turns, props.mode === "mock" ? props.draft : "");
+  const liveText = shown.live ? captionText(shown.live) : "";
   return (
     <section className="panel talk">
       <header className="talk-bar">
@@ -44,15 +57,32 @@ export function TalkScreen(props: Props) {
       {props.error ? <p className="banner bad">{props.error}</p> : null}
       {props.notice ? <p className="banner">{props.notice}</p> : null}
 
-      <ol className="transcript" data-testid="transcript">
-        {props.turns.filter((turn) => turn.text.trim()).map((turn) => (
-          <li key={turn.id} className={turn.role === "ai" ? "ai" : "learner"} data-testid={turn.role === "ai" ? "ai-turn" : "learner-turn"}>
-            <span>{turn.role === "ai" ? "Mouthy" : "あなた"}</span>
-            {turn.isHint ? <em>ヒント</em> : null}
-            <p>{turn.text}</p>
-          </li>
-        ))}
-      </ol>
+      <div data-testid="transcript">
+        <h2 className="section-label">会話</h2>
+        <ol className="history">
+          {shown.history.length === 0 ? <li className="empty">終わった発話がここに残ります。</li> : null}
+          {shown.history.map((turn) => (
+            <li
+              key={turn.id}
+              className={`${turn.role === "ai" ? "ai" : "learner"}${turn.finality === "partial" ? " partial" : ""}${turn.finality === "failed" ? " failed" : ""}`}
+              data-testid={turn.role === "ai" ? "ai-turn" : "learner-turn"}
+            >
+              <span>{speakerLabel(turn.role)}</span>
+              {turn.isHint ? <em>ヒント</em> : null}
+              <p>{turn.text}</p>
+            </li>
+          ))}
+        </ol>
+        <div
+          className={`live-caption${shown.live?.finality === "partial" ? " partial" : ""}`}
+          data-testid="live-caption"
+          aria-live="polite"
+        >
+          <span>{shown.live ? speakerLabel(shown.live.role) : "いまの発話"}</span>
+          {shown.live?.isHint ? <em>ヒント</em> : null}
+          <p>{liveText || "いま話している内容がここに出ます。"}</p>
+        </div>
+      </div>
 
       {props.mode === "mock" ? (
         <form

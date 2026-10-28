@@ -48,7 +48,7 @@ cp .env.example .env
 | `VOICE_PROVIDER` | `openai` | `gemini` にすると、このデモのブラウザ音声は始まりません |
 | `OPENAI_API_KEY` | 空 | サーバーだけが使う秘密鍵 |
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime-2.1` | Realtime のモデル名 |
-| `OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-mini-transcribe` | 学習者の音声を文字にする別モデル |
+| `OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-mini-transcribe` | 学習者の字幕用モデル。`gpt-4o-transcribe` も増分字幕に使える |
 | `OPENAI_VOICE` | `marin` | 読み上げ声。`cedar` も公式の推奨です |
 | `GEMINI_API_KEY` | 空 | 補助アダプタ用。ブラウザ音声には使いません |
 | `GEMINI_LIVE_MODEL` | `gemini-3.8-live` | Gemini Live のモデル名 |
@@ -99,11 +99,20 @@ npm start
 2. 画面の案内が「音声の準備ができています」になることを確認する
 3. 音声の送信についての説明にチェックを入れる
 4. 「音声で話す」を押し、Chrome のマイク許可を出す
-5. AI が先に話す。考えている間は黙っていてよい。`um` や言いよどみでは、semantic VAD の `eagerness: low` が最大約 8 秒待つ
-6. こちらが全く話さない状態が続くと、画面の待ち時間のあとでヒント用の応答が 1 回出る（1 セッション最大回数まで）
-7. 終わったら「会話を終えて振り返る」
+5. AI が先に話す。下の「いまの発話」に、話している途中の字幕が出ます。言い終わると上の「会話」に残ります
+6. 考えている間は黙っていてよい。`um` や言いよどみでは、semantic VAD の `eagerness: low` が最大約 8 秒待つ
+7. こちらが全く話さない状態が続くと、画面の待ち時間のあとでヒント用の応答が 1 回出る（1 セッション最大回数まで）
+8. 終わったら「会話を終えて振り返る」
 
-音声モードは、この環境に API キーがなかったため、実マイクでの疎通は未確認です。接続に失敗したときは、モデル名とキーの権限を確認し、テキストモードで流れだけ見てください。
+音声の画面は、終わった発話の履歴と、いま話している 1〜2 行の字幕に分かれます。AI の字幕は `response.output_audio_transcript.delta` を順に足します。学習者の字幕は `conversation.item.input_audio_transcription.delta` を足し、`completed` で確定文に置き換えます。確定前の文字は薄い表示で、振り返りの指摘と詰まった表現には使いません。
+
+学習者の行は `input_audio_buffer.speech_started` の時点で作り、文字起こしが遅れても返答の後ろに回りません。`conversation.item.added` の `previous_item_id` と `input_audio_buffer.committed` でも位置を合わせます。聞き取れなかった行は「聞き取れませんでした」と残し、空の吹き出しのままにはしません。
+
+公式の Realtime 文字起こしガイドでは、`gpt-4o-mini-transcribe` と `gpt-4o-transcribe` の delta は増分です。`whisper-1` の delta は、そのターンの全文です。既定は増分が出る `gpt-4o-mini-transcribe` で、`OPENAI_TRANSCRIBE_MODEL` で変えられます。同じガイドでは、入力の delta はサーバーがターンを確定したあと（VAD の commit 後）に届きます。話している最中の字幕は「話しています…」で、部分的な文字はその後に流れます。
+
+テキストモードでは、入力中の文が「いまの発話」に確定文として出ます。送ると履歴に移ります。
+
+音声モードは、この環境に API キーがなかったため、実マイクでの字幕の流れは未確認です。接続に失敗したときは、モデル名とキーの権限を確認し、テキストモードで流れだけ見てください。
 
 ## テスト
 
@@ -169,7 +178,8 @@ P1 以降で、デモに含めていないものです。
 - 質問を 1 つに保つ制約は、プロンプトとモックでは強制しています。Realtime のモデルが毎回守るかは未検証です
 - `semantic_vad` では `silence_duration_ms` は効きません（公式仕様）。無音のミリ秒は `server_vad` のときだけ送ります
 - 全く話していないときのヒントは、クライアントのタイマーです。発話の途中の間は API の VAD に任せます。`idle_timeout_ms` は「無音が異常」という電話向けなので使っていません
-- 文字起こしは別モデルで、モデルが聞いた内容とずれることがあります（公式の注意どおり）
+- ライブ音声の字幕は未検証です。文字起こしは別モデルで、モデルが聞いた内容とずれることがあります（公式の注意どおり）。入力の途中字幕は、ターン確定後の delta に依存します
+- ターンの取り方（semantic VAD、`eagerness: low`、`create_response: true`）はこの変更では変えていません。考え中に AI が話し始める挙動は残っています
 - 相づちの「声」は、応答ターンの冒頭だけです。待っている間と発話中の相づちは画面表示です
 - 詰まった表現の保存先は `localStorage` だけです。ブラウザのデータを消すと消えます
 
