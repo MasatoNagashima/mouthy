@@ -1,6 +1,6 @@
 # Mouthy デモ
 
-日本人の英語学習者向け音声英会話「Mouthy」の、ローカルで動くデモです。製品要件は [PRD.md](PRD.md) にあります。iOS アプリは将来の計画で、このリポジトリにはありません。
+日本人の英語学習者向け音声英会話「Mouthy」の、ローカルで動くデモです。製品要件は [PRD.md](PRD.md) にあります。iOS アプリ（SwiftUI、STG 向け）は [ios/](ios/) にあります。STG の用意は [docs/stg-setup-owner-checklist.md](docs/stg-setup-owner-checklist.md) です。本番環境はこのリポジトリでは作りません。
 
 会話そのものは英語です。画面の説明は日本語です。
 
@@ -211,4 +211,16 @@ P1 以降で、デモに含めていないものです。
 - `src/shared` … ロール、指示文、モック、詰まり検出、フィードバック、待ち時間
 - `src/voice` … OpenAI Realtime のブラウザ接続とイベント処理
 - `server` … 設定の公開と、短命トークンの発行
+- `ios` … SwiftUI アプリ（スキームは Mouthy STG だけ）と、画面から分離した `MouthyLogic`
+- `infra` … STG（mouthy-stg）の Terraform。本番のディレクトリは無い
 - `PRD.md` … 製品要件。実装の優先度はこちらに合わせています
+
+## iOS と STG
+
+iOS のロジックテストは Linux でも動きます。
+
+```bash
+cd ios/MouthyLogic && swift test
+```
+
+画面（SwiftUI）のビルドと TestFlight は Xcode Cloud です。このリポジトリの GitHub Actions は Linux だけで、サーバーのテスト、STG の terraform plan、main への push での STG デプロイを担当します。API キーは Secret Manager に置き、アプリは今までどおり短命トークンだけを受け取ります。オーナーが最初にやることは [docs/stg-setup-owner-checklist.md](docs/stg-setup-owner-checklist.md) にまとめてあります。

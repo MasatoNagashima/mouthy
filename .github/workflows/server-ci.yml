@@ -1,0 +1,60 @@
+# PR のサーバー単体テストと、iOS のロジック (ios/MouthyLogic) の Swift テスト。
+# 画面 (SwiftUI) は Linux ではビルドしない。ubuntu-24.04 の Swift が無いときは公式のツールチェーンを入れる。
+# Linux ランナーだけを使う (macOS は使わない)。iOS のビルドと TestFlight は Xcode Cloud。
+name: server-ci
+
+on:
+  pull_request:
+    paths:
+      - "server/**"
+      - "src/**"
+      - "test/**"
+      - "ci/**"
+      - "package.json"
+      - "package-lock.json"
+      - "ios/MouthyLogic/**"
+      - ".github/workflows/server-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Node packages
+        run: npm ci
+
+      - name: Node tests and typecheck
+        run: |
+          npm test
+          npm run build
+
+      - name: Install Swift if the runner does not have it
+        run: |
+          if command -v swift >/dev/null; then
+            swift --version
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends binutils clang libcurl4-openssl-dev libpython3-dev
+          curl -fsSL -o /tmp/swift.tar.gz \
+            https://download.swift.org/swift-6.2.1-release/ubuntu2404/swift-6.2.1-RELEASE/swift-6.2.1-RELEASE-ubuntu24.04.tar.gz
+          sudo tar -xzf /tmp/swift.tar.gz -C /opt
+          echo "/opt/swift-6.2.1-RELEASE-ubuntu24.04/usr/bin" >> "$GITHUB_PATH"
+
+      - name: MouthyLogic tests
+        working-directory: ios/MouthyLogic
+        run: swift test

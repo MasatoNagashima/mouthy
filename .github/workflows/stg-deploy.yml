@@ -1,0 +1,115 @@
+# main への push で STG に出す。本番には出さない。
+#   1. terraform apply (infra/envs/stg)
+#   2. Cloud Run (mouthy-api) のデプロイ (ci/stg_deploy.sh。変わったイメージだけ Cloud Build で作り直す)
+# iOS のビルドと TestFlight は Xcode Cloud。
+# 認証は Workload Identity 連携 (鍵なし)。gha-stg-deploy は main ブランチのトークンでしか使えない。
+# リポジトリ変数 GCP_STG_WIF_PROVIDER が無いうちは何もしない。
+name: stg-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "src/**"
+      - "ci/**"
+      - "package.json"
+      - "package-lock.json"
+      - "infra/**"
+      - ".github/workflows/stg-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: stg-deploy
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  terraform-apply:
+    if: github.ref == 'refs/heads/main' && vars.GCP_STG_WIF_PROVIDER != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infra/envs/stg
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_STG_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_STG_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_STG_DEPLOY_SA }}
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+
+      - name: terraform init
+        run: terraform init
+
+      # Cloud Run はイメージが無いと作れない。置き場とサービスアカウントを先に作り、
+      # イメージが無ければ Cloud Build で作ってから、本体を apply する。
+      - name: Apply foundations
+        run: |
+          terraform apply -no-color -auto-approve \
+            -target=google_project_service.apis \
+            -target=module.api_sa \
+            -target=google_secret_manager_secret.openai \
+            -target=google_secret_manager_secret_iam_member.openai_accessor \
+            -target=module.registry
+
+      - name: Build the API image when it does not exist yet
+        working-directory: ${{ github.workspace }}
+        run: |
+          image="asia-northeast1-docker.pkg.dev/${{ vars.GCP_STG_PROJECT_ID }}/mouthy/api:stg"
+          if gcloud artifacts docker images describe "$image" >/dev/null 2>&1; then
+            echo "image already exists"
+          else
+            gcloud builds submit \
+              --project="${{ vars.GCP_STG_PROJECT_ID }}" \
+              --region=asia-northeast1 \
+              --config=server/cloudbuild.api.yaml \
+              .
+          fi
+
+      - name: terraform plan
+        run: |
+          terraform plan -no-color -out=tfplan | tee plan.txt
+          {
+            echo "## terraform (mouthy-stg)"
+            echo '```'
+            grep -E '^(Plan:|No changes)' plan.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: terraform apply
+        run: terraform apply -no-color tfplan
+
+  deploy:
+    needs: terraform-apply
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_STG_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_STG_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_STG_DEPLOY_SA }}
+
+      - name: Deploy Cloud Run (STG)
+        run: |
+          gcloud --version | head -n 1
+          bash ci/stg_deploy.sh

@@ -1,8 +1,11 @@
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import path from "node:path";
 import { parseFillerList } from "../src/shared/fillers.ts";
-import type { QaPair } from "../src/shared/qa.ts";
+import { extractQaPairs, type QaPair } from "../src/shared/qa.ts";
+import { assembleReview } from "../src/shared/review.ts";
 import { parseSessionSettings, SettingsError } from "../src/shared/scenarios.ts";
+import type { ChatTurn } from "../src/shared/types.ts";
+import { computeWpm, type SpeechSpan } from "../src/shared/wpm.ts";
 import { loadConfig, toPublicConfig, type AppConfig } from "./config.ts";
 import { judgePairs } from "./judge.ts";
 import { mintGeminiToken, mintOpenAIToken, sanitizeUpstream } from "./providers.ts";
@@ -17,7 +20,8 @@ export function createApp(deps: AppDeps = {}): Express {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const app = express();
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "32kb" }));
+  app.use(express.json({ limit: "256kb" }));
+  const requireClient = clientGate(config.clientToken);
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
@@ -27,7 +31,7 @@ export function createApp(deps: AppDeps = {}): Express {
     res.json(toPublicConfig(config));
   });
 
-  app.post("/api/realtime/session", async (req: Request, res: Response) => {
+  app.post("/api/realtime/session", requireClient, async (req: Request, res: Response) => {
     const pub = toPublicConfig(config);
     if (!pub.browserVoiceImplemented) {
       res.status(409).json({ error: "provider_unavailable", message: pub.message });
@@ -59,7 +63,7 @@ export function createApp(deps: AppDeps = {}): Express {
     }
   });
 
-  app.post("/api/feedback/judge", async (req, res) => {
+  app.post("/api/feedback/judge", requireClient, async (req, res) => {
     const pairs = parseJudgePairs(req.body);
     if (!pairs) {
       res.status(400).json({ error: "bad_pairs", message: "質問と答えの組が不正です。" });
@@ -75,7 +79,40 @@ export function createApp(deps: AppDeps = {}): Express {
     res.json(result);
   });
 
-  app.post("/api/providers/gemini/token", async (req, res) => {
+  app.post("/api/feedback/review", requireClient, async (req, res) => {
+    const body = parseReviewBody(req.body);
+    if (!body) {
+      res.status(400).json({ error: "bad_review", message: "振り返りの入力が不正です。" });
+      return;
+    }
+    const fillers = config.fillers.length > 0 ? config.fillers : parseFillerList(null);
+    const pairs = extractQaPairs(body.turns);
+    const judge = await judgePairs({
+      pairs,
+      fillers,
+      apiKey: config.openaiApiKey,
+      model: config.openaiJudgeModel,
+      fetchImpl,
+    });
+    const wpm = computeWpm({ mode: body.mode, turns: body.turns, spans: body.spans, fillers });
+    const learnerTexts = body.turns
+      .filter((turn) => turn.role === "learner" && turn.finality === "final" && turn.text.trim())
+      .map((turn) => turn.text);
+    res.json(
+      assembleReview({
+        judge,
+        wpm,
+        checkpointsDone: body.checkpointsDone,
+        checkpointsTotal: body.checkpointsTotal,
+        learnerTexts,
+        fillers,
+        previousTotal: body.previousTotal,
+        reactionMedianMs: body.reactionMedianMs,
+      }),
+    );
+  });
+
+  app.post("/api/providers/gemini/token", requireClient, async (req, res) => {
     if (!config.geminiApiKey) {
       res.status(503).json({
         error: "missing_api_key",
@@ -123,6 +160,85 @@ export function createApp(deps: AppDeps = {}): Express {
   }
 
   return app;
+}
+
+function clientGate(expected: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!expected) {
+      next();
+      return;
+    }
+    const header = req.header("x-mouthy-client") ?? "";
+    if (header !== expected) {
+      res.status(401).json({ error: "unauthorized", message: "クライアントトークンが違います。" });
+      return;
+    }
+    next();
+  };
+}
+
+function parseReviewBody(body: unknown): {
+  mode: "mock" | "voice";
+  turns: ChatTurn[];
+  spans: SpeechSpan[];
+  checkpointsDone: number;
+  checkpointsTotal: number;
+  previousTotal: number | null;
+  reactionMedianMs: number | null;
+} | null {
+  if (!body || typeof body !== "object") return null;
+  const record = body as Record<string, unknown>;
+  if (!Array.isArray(record.turns) || record.turns.length > 80) return null;
+  const turns: ChatTurn[] = [];
+  for (const item of record.turns) {
+    if (!item || typeof item !== "object") return null;
+    const turn = item as Record<string, unknown>;
+    if (turn.role !== "ai" && turn.role !== "learner") return null;
+    if (turn.finality !== "partial" && turn.finality !== "final" && turn.finality !== "failed") return null;
+    if (typeof turn.id !== "string" || typeof turn.text !== "string") return null;
+    turns.push({
+      id: turn.id.slice(0, 80),
+      role: turn.role,
+      text: turn.text.slice(0, 4000),
+      isHint: Boolean(turn.isHint),
+      finality: turn.finality,
+    });
+  }
+  const spans: SpeechSpan[] = [];
+  if (record.spans != null) {
+    if (!Array.isArray(record.spans) || record.spans.length > 80) return null;
+    for (const item of record.spans) {
+      if (!item || typeof item !== "object") return null;
+      const span = item as Record<string, unknown>;
+      if (typeof span.itemId !== "string") return null;
+      spans.push({
+        itemId: span.itemId.slice(0, 80),
+        startMs: finiteOrNull(span.startMs),
+        endMs: finiteOrNull(span.endMs),
+      });
+    }
+  }
+  const mode = record.mode === "voice" ? "voice" : "mock";
+  return {
+    mode,
+    turns,
+    spans,
+    checkpointsDone: nonNegativeInt(record.checkpointsDone),
+    checkpointsTotal: nonNegativeInt(record.checkpointsTotal),
+    previousTotal: finiteOrNull(record.previousTotal),
+    reactionMedianMs: finiteOrNull(record.reactionMedianMs),
+  };
+}
+
+function finiteOrNull(value: unknown): number | null {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function nonNegativeInt(value: unknown): number {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return 0;
+  return Math.min(40, Math.floor(number));
 }
 
 function parseJudgePairs(body: unknown): QaPair[] | null {

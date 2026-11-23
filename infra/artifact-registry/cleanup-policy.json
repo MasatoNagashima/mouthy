@@ -1,0 +1,26 @@
+[
+  {
+    "name": "delete-older-than-1d",
+    "action": {"type": "Delete"},
+    "condition": {
+      "tagState": "any",
+      "olderThan": "86400s"
+    }
+  },
+  {
+    "name": "keep-2-most-recent",
+    "action": {"type": "Keep"},
+    "mostRecentVersions": {
+      "packageNamePrefixes": ["api"],
+      "keepCount": 2
+    }
+  },
+  {
+    "name": "keep-stg-tag",
+    "action": {"type": "Keep"},
+    "condition": {
+      "tagState": "tagged",
+      "tagPrefixes": ["stg"]
+    }
+  }
+]
