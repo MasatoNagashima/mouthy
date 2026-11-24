@@ -63,14 +63,14 @@ Variables（Settings → Secrets and variables → Actions → **Variables**。�
 
 ## 4. Apple Developer と TestFlight
 
-Xcode プロジェクトはスキーム **Mouthy STG** の 1 つだけです。バンドル ID は `com.mouthy.stg`。`DEVELOPMENT_TEAM` は Shadowly の公開プロジェクトと同じ `P975GG75YV` を仮に入れてあります。
+Xcode プロジェクトのターゲットとスキームは **Mouthy STG** の 1 つだけです。本番ターゲットはありません。表示名（`PRODUCT_NAME` と `CFBundleDisplayName`）も **Mouthy STG** で、ビルド成果物は `Mouthy STG.app` です。Swift モジュール名（`PRODUCT_MODULE_NAME`）は `Mouthy` のままです。バンドル ID は `com.mouthy.stg`。`DEVELOPMENT_TEAM` は Shadowly の公開プロジェクトと同じ `P975GG75YV` を仮に入れてあります。
 
 - [ ] [developer.apple.com](https://developer.apple.com) でチーム ID が `P975GG75YV` でなければ、`ios/Mouthy.xcodeproj/project.pbxproj` の `DEVELOPMENT_TEAM` を差し替える。
 - [ ] Identifiers に App ID **`com.mouthy.stg`** を作る。Capability は **Sign in with Apple**。Push 通知は使っていない。
 - [ ] 署名は Automatic（Xcode / Xcode Cloud が Development と Distribution の証明書とプロビジョニングプロファイルを作る）。手元に書き出した `.p12` や `.mobileprovision` はリポジトリに置かない。
-- [ ] App Store Connect にアプリを作る。バンドル ID は `com.mouthy.stg`。名前は Mouthy。SKU は任意（例: `mouthy-stg`）。
-- [ ] Xcode Cloud をそのアプリで有効にし、リポジトリ `MasatoNagashima/mouthy` を接続する。
-- [ ] ワークフロー: スキーム `Mouthy STG`、開始条件は `main` への変更、アクションは Archive、配布先は TestFlight の内部テスト。環境変数 `API_BASE_URL` が必要になったら、xcconfig を変える（次項）。`ci_post_clone.sh` が `ios/MouthyLogic` の `swift test` を流す。
+- [ ] App Store Connect にアプリを作る。バンドル ID は `com.mouthy.stg`。アプリ名は **Mouthy STG**。SKU は任意（例: `mouthy-stg`）。
+- [ ] Xcode Cloud をそのアプリで有効にし、リポジトリ `MasatoNagashima/mouthy` を接続する。プロダクト名は **Mouthy STG**（ターゲット「Mouthy STG」に 1 つ）。
+- [ ] ワークフロー名は **Deploy Mouthy STG**。スキーム `Mouthy STG`。開始条件は `main` の iOS 変更。アクションは Archive。配布先は TestFlight の内部テスト。環境変数 `API_BASE_URL` が必要になったら、xcconfig を変える（次項）。`ci_post_clone.sh` が `ios/MouthyLogic` の `swift test` を流す。
 - [ ] 内部テスターの Apple ID を TestFlight に追加する。
 - [ ] **App Store Connect API キー**（Issuer ID、Key ID、`.p8`）は、このリポジトリの GitHub Actions も Xcode Cloud も使いません。Xcode Cloud は Apple ID の接続でアップロードします。あとから Fastlane などで外から上げるときにだけ、GitHub Secrets の `APPSTORE_API_KEY_ID`、`APPSTORE_API_ISSUER_ID`、`APPSTORE_API_PRIVATE_KEY` に入れてください。`.p8` はコミットしない。
 

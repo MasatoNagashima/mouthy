@@ -211,7 +211,7 @@ P1 以降で、デモに含めていないものです。
 - `src/shared` … ロール、指示文、モック、詰まり検出、フィードバック、待ち時間
 - `src/voice` … OpenAI Realtime のブラウザ接続とイベント処理
 - `server` … 設定の公開と、短命トークンの発行
-- `ios` … SwiftUI アプリ（スキームは Mouthy STG だけ）と、画面から分離した `MouthyLogic`
+- `ios` … SwiftUI アプリ（ターゲット、スキーム、表示名は Mouthy STG。モジュール名は Mouthy）と、画面から分離した `MouthyLogic`
 - `infra` … STG（mouthy-stg）の Terraform。本番のディレクトリは無い
 - `PRD.md` … 製品要件。実装の優先度はこちらに合わせています
 

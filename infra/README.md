@@ -6,7 +6,7 @@
 
 | 何を | どこで | いつ |
 | --- | --- | --- |
-| iOS のビルド、TestFlight | Xcode Cloud（スキーム `Mouthy STG`） | main。ワークフローは App Store Connect で作る |
+| iOS のビルド、TestFlight | Xcode Cloud（プロダクト「Mouthy STG」、ワークフロー「Deploy Mouthy STG」） | main の iOS 変更で Archive、TestFlight 内部テスト |
 | サーバーの単体テストと `ios/MouthyLogic` の Swift テスト | GitHub Actions `server-ci` | PR |
 | `terraform plan`（STG） | GitHub Actions `infra-plan` | PR（`infra/` が変わったとき） |
 | `terraform apply`（STG）→ Cloud Run `mouthy-api` | GitHub Actions `stg-deploy` | main への push、手動実行 |
