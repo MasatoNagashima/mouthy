@@ -61,8 +61,18 @@ jobs:
       - name: terraform plan (STG)
         if: vars.GCP_STG_WIF_PROVIDER != ''
         run: |
-          # gha-stg-plan は状態バケットを読むだけ。lock ファイルを書けないので、init も plan も lock しない。
-          terraform init -lock=false
+          # gha-stg-plan は状態を読むだけなので、ロック用オブジェクトを書けない。
+          # init の -lock=false は状態の移行にしか効かず、GCS バックエンドの初期化は
+          # default.tflock を作ろうとして 403 になる。状態を手元にコピーし、ローカルバックエンドで plan する。
+          state="gs://mouthy-stg-tfstate/envs/stg/default.tfstate"
+          if gcloud storage cat "$state" > /tmp/mouthy-stg.tfstate; then
+            mv /tmp/mouthy-stg.tfstate terraform.tfstate
+            echo "copied remote state"
+          else
+            rm -f terraform.tfstate /tmp/mouthy-stg.tfstate
+            echo "no remote state yet; planning from an empty state"
+          fi
+          terraform init -backend=false -input=false
           set +e
           terraform plan -lock=false -no-color -detailed-exitcode > plan.txt 2>&1
           code=$?

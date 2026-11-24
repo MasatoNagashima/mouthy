@@ -57,6 +57,7 @@ Variables（Settings → Secrets and variables → Actions → **Variables**。�
 | `GCP_STG_DEPLOY_SA` | 同じ出力の `GCP_STG_DEPLOY_SA` |
 
 - [ ] この 4 つを入れるまで、`infra-plan` の plan と `stg-deploy` は何もしない（ワークフローは成功でスキップする）。
+- `gha-stg-plan` は状態バケットを読むだけです。`infra-plan` は `default.tfstate` をコピーし、ロックファイルは作りません。
 - [ ] GitHub Actions の Secrets に OpenAI の鍵は置かない。JSON のサービスアカウント鍵も作らない。
 - [ ] `GCP_PRD_*` や `PRD_APPSTORE_*` は Shadowly にはあるが、Mouthy には作らない。
 
