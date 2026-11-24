@@ -1,0 +1,14 @@
+.gcloudignore
+.git
+.github
+node_modules
+dist
+dist-server
+ios
+infra
+docs
+coverage
+*.log
+.env
+.env.*
+!.env.example

@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-server
+.git
+.github
+ios
+infra
+docs
+coverage
+*.log
+.env
+.env.*
+!.env.example
+**/.DS_Store

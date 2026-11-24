@@ -8,3 +8,10 @@ coverage/
 .DS_Store
 playwright-report/
 test-results/
+.terraform/
+*.tfstate
+*.tfstate.*
+ios/MouthyLogic/.build/
+**/xcuserdata/
+*.xcuserstate
+DerivedData/

@@ -1,0 +1,95 @@
+# PR の terraform plan (STG のみ)。結果はジョブの Summary に出す。
+# 認証は Workload Identity 連携 (鍵なし) で、読み取りだけの gha-stg-plan を使う。
+# リポジトリ変数 GCP_STG_WIF_PROVIDER が無いうち (infra/bootstrap/stg の apply 前) は plan を飛ばす。
+# 本番の plan / apply は置かない。
+name: infra-plan
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-plan.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: infra-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  plan-stg:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/envs/stg
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        working-directory: infra
+        run: terraform fmt -check -recursive
+
+      - name: terraform validate (backend なし)
+        run: |
+          terraform init -backend=false
+          terraform validate
+          (cd ../../bootstrap/stg && terraform init -backend=false && terraform validate)
+
+      - name: Skip plan (Workload Identity not set up yet)
+        if: vars.GCP_STG_WIF_PROVIDER == ''
+        run: echo "::notice::GCP_STG_WIF_PROVIDER is not set; skipped terraform plan (see infra/README.md)"
+
+      - uses: google-github-actions/auth@v3
+        if: vars.GCP_STG_WIF_PROVIDER != ''
+        with:
+          project_id: ${{ vars.GCP_STG_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_STG_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_STG_PLAN_SA }}
+
+      - name: terraform plan (STG)
+        if: vars.GCP_STG_WIF_PROVIDER != ''
+        run: |
+          # gha-stg-plan は状態を読むだけなので、GCS バックエンドの初期化が作る
+          # default.tflock を書けない。状態をコピーし、override でローカルバックエンドにする。
+          state="gs://mouthy-stg-tfstate/envs/stg/default.tfstate"
+          if gcloud storage cat "$state" > /tmp/mouthy-stg.tfstate; then
+            mv /tmp/mouthy-stg.tfstate terraform.tfstate
+            echo "copied remote state"
+          else
+            rm -f terraform.tfstate /tmp/mouthy-stg.tfstate
+            echo "no remote state yet; planning from an empty state"
+          fi
+          printf '%s\n' 'terraform {' '  backend "local" {' '    path = "terraform.tfstate"' '  }' '}' > backend_override.tf
+          rm -rf .terraform
+          terraform init -input=false
+          set +e
+          terraform plan -lock=false -no-color -detailed-exitcode > plan.txt 2>&1
+          code=$?
+          set -e
+          {
+            echo "## terraform plan (mouthy-stg)"
+            echo '```'
+            grep -E '^(Plan:|No changes|Error)' plan.txt || true
+            echo '```'
+            echo '<details><summary>全文</summary>'
+            echo
+            echo '```'
+            cat plan.txt
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat plan.txt
+          # 0 = 変更なし、2 = 変更あり (どちらも成功)、1 = エラー
+          [ "$code" -ne 1 ]

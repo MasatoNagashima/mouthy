@@ -35,7 +35,7 @@ export function buildOpenAIClientSecretBody(settings: SessionSettings, config: A
         },
         output: {
           voice: config.openaiVoice,
-          speed: speedForLevel(settings.level),
+          speed: settings.speechSpeed ?? speedForLevel(settings.level),
         },
       },
     },

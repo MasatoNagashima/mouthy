@@ -12,6 +12,8 @@ export type AppConfig = {
   openaiJudgeModel: string;
   fillers: string[];
   port: number;
+  /** 空ならチェックしない。STG で入れると、トークンと振り返りに X-Mouthy-Client が要る。 */
+  clientToken: string;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -27,6 +29,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     openaiJudgeModel: (env.OPENAI_JUDGE_MODEL ?? "").trim() || "gpt-5.4-mini",
     fillers: parseFillerList(env.FILLER_WORDS),
     port: Number(env.PORT) > 0 ? Number(env.PORT) : 8787,
+    clientToken: (env.MOUTHY_CLIENT_TOKEN ?? "").trim(),
   };
 }
 

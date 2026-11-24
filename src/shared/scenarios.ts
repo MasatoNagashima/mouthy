@@ -118,7 +118,7 @@ export function parseSessionSettings(input: unknown): SessionSettings {
       ? eagerness
       : "low";
   const goal = typeof body.goal === "string" ? body.goal.trim().slice(0, 200) : "";
-  const extra = typeof body.extraInstructions === "string" ? body.extraInstructions.trim().slice(0, 500) : "";
+  const extra = typeof body.extraInstructions === "string" ? body.extraInstructions.trim().slice(0, 2000) : "";
   const reuse = Array.isArray(body.reusePhrases)
     ? body.reusePhrases.filter((phrase): phrase is string => typeof phrase === "string").map((phrase) => phrase.trim().slice(0, 80)).filter(Boolean).slice(0, 8)
     : [];
@@ -141,5 +141,12 @@ export function parseSessionSettings(input: unknown): SessionSettings {
       MIN_SILENCE_DURATION_MS,
       MAX_SILENCE_DURATION_MS,
     ),
+    speechSpeed: parseSpeechSpeed(body.speechSpeed),
   };
+}
+
+function parseSpeechSpeed(value: unknown): number | undefined {
+  const speed = Number(value);
+  if (!Number.isFinite(speed)) return undefined;
+  return clamp(speed, 0.8, 1.2);
 }

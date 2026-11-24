@@ -17,6 +17,8 @@ export type SessionSettings = {
   vadMode: VadMode;
   eagerness: Eagerness;
   silenceDurationMs: number;
+  /** 未指定ならレベルごとの既定速度。プロフィールの「話す速さ」から渡す。 */
+  speechSpeed?: number;
 };
 
 export type TurnFinality = "partial" | "final" | "failed";

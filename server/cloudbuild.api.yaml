@@ -1,0 +1,15 @@
+# STG API image. ci/stg_deploy.sh submits this when an API input changed.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - server/Dockerfile
+      - -t
+      - asia-northeast1-docker.pkg.dev/mouthy-stg/mouthy/api:stg
+      - .
+images:
+  - asia-northeast1-docker.pkg.dev/mouthy-stg/mouthy/api:stg
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1800s
