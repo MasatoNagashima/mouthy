@@ -1,11 +1,10 @@
-import AuthenticationServices
 import AVFoundation
 import SwiftUI
 import MouthyLogic
 
 struct OnboardingView: View {
     @Environment(AppModel.self) private var model
-    @State private var step = 0
+    @State private var step = 1
     @State private var agreed = false
     @State private var showPolicy = false
     @State private var micDenied = false
@@ -14,11 +13,11 @@ struct OnboardingView: View {
     var body: some View {
         VStack(spacing: 0) {
             if step > 0 {
-                ProgressView(value: Double(step + 1), total: 4)
+                ProgressView(value: Double(step), total: 2)
                     .tint(MColor.green)
                     .padding(.horizontal, MSpace.l)
                     .padding(.top, 8)
-                Text("\(step + 1)/4")
+                Text("\(step)/2")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(MColor.inkSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -28,7 +27,6 @@ struct OnboardingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: MSpace.l) {
                     switch step {
-                    case 0: welcome
                     case 1: goals
                     default: consent
                     }
@@ -36,24 +34,7 @@ struct OnboardingView: View {
                 .padding(MSpace.l)
             }
             VStack(spacing: MSpace.m) {
-                if step == 0 {
-                    SignInWithAppleButton(.signIn) { request in
-                        request.requestedScopes = [.fullName]
-                    } onCompletion: { result in
-                        if case .success(let auth) = result, let credential = auth.credential as? ASAuthorizationAppleIDCredential {
-                            let given = [credential.fullName?.familyName, credential.fullName?.givenName].compactMap { $0 }.joined()
-                            model.profile.appleUserID = credential.user
-                            if !given.isEmpty { model.profile.name = given }
-                            model.save()
-                        }
-                        step = 1
-                    }
-                    .signInWithAppleButtonStyle(.black)
-                    .frame(height: 54)
-                    .clipShape(RoundedRectangle(cornerRadius: MRadius.button))
-                    Button("あとで登録する") { step = 1 }
-                        .buttonStyle(MouthyButtonStyle(kind: .secondary))
-                } else if step == 1 {
+                if step == 1 {
                     Button("次へ") { step = 2 }
                         .buttonStyle(MouthyButtonStyle())
                 } else {
@@ -77,19 +58,6 @@ struct OnboardingView: View {
         }
         .mouthyScreen()
         .sheet(isPresented: $showPolicy) { policy }
-    }
-
-    private var welcome: some View {
-        VStack(alignment: .leading, spacing: MSpace.l) {
-            Text("完璧より、\n伝わる英語。")
-                .font(.largeTitle.bold())
-            Text("AIが聞き役と進行役。\nあなたは、話すことに集中するだけ。")
-                .font(.title3)
-                .foregroundStyle(MColor.inkSecondary)
-            feature("bubble.left.and.bubble.right.fill", "AIが質問でリード", "話題を考えなくていい。答えやすい質問から順に聞きます")
-            feature("hourglass", "詰まっても大丈夫", "黙っても急かしません。3段階のヒントで背中を押します")
-            feature("chart.line.uptrend.xyaxis", "伸びが見える", "伝わった割合・話す速さ・正確さの推移を毎回記録")
-        }
     }
 
     private var goals: some View {
@@ -154,16 +122,6 @@ struct OnboardingView: View {
             .navigationTitle("プライバシーポリシー")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("閉じる") { showPolicy = false } } }
-        }
-    }
-
-    private func feature(_ symbol: String, _ title: String, _ body: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol).foregroundStyle(MColor.green).frame(width: 28)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.headline)
-                Text(body).font(.footnote).foregroundStyle(MColor.inkSecondary)
-            }
         }
     }
 

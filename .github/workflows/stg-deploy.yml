@@ -65,6 +65,8 @@ jobs:
             -target=module.api_sa \
             -target=google_secret_manager_secret.openai \
             -target=google_secret_manager_secret_iam_member.openai_accessor \
+            -target=google_secret_manager_secret.session \
+            -target=google_secret_manager_secret_iam_member.session_accessor \
             -target=module.registry
 
       - name: Build the API image when it does not exist yet

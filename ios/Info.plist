@@ -6,6 +6,10 @@
 	<string>$(API_BASE_URL)</string>
 	<key>MouthyClientToken</key>
 	<string>$(MOUTHY_CLIENT_TOKEN)</string>
+	<key>GIDClientID</key>
+	<string>$(GID_CLIENT_ID)</string>
+	<key>GoogleReversedClientID</key>
+	<string>$(GOOGLE_REVERSED_CLIENT_ID)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UILaunchScreen</key>

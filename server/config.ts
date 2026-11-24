@@ -12,8 +12,12 @@ export type AppConfig = {
   openaiJudgeModel: string;
   fillers: string[];
   port: number;
-  /** 空ならチェックしない。STG で入れると、トークンと振り返りに X-Mouthy-Client が要る。 */
+  /** 空なら、本番以外ではクライアントトークンだけを見る。入っているとセッショントークンが必須。 */
   clientToken: string;
+  sessionSecret: string;
+  nodeEnv: string;
+  appleAudience: string;
+  googleClientId: string;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -30,6 +34,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     fillers: parseFillerList(env.FILLER_WORDS),
     port: Number(env.PORT) > 0 ? Number(env.PORT) : 8787,
     clientToken: (env.MOUTHY_CLIENT_TOKEN ?? "").trim(),
+    sessionSecret: (env.MOUTHY_SESSION_SECRET ?? "").trim(),
+    nodeEnv: (env.NODE_ENV ?? "").trim(),
+    appleAudience: (env.MOUTHY_APPLE_AUDIENCE ?? "").trim() || "com.mouthy.stg",
+    googleClientId: (env.MOUTHY_GOOGLE_CLIENT_ID ?? "").trim(),
   };
 }
 

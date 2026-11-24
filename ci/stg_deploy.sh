@@ -92,6 +92,9 @@ else
   image="$(serving_image)"
 fi
 
+google_client_file="${repo}/infra/google-client.json"
+google_client_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("iosClientId",""))' "$google_client_file")"
+
 echo "deploy ${service} image=${image}"
 gcloud run deploy "$service" \
   --project="$project" \
@@ -106,8 +109,8 @@ gcloud run deploy "$service" \
   --memory=512Mi \
   --timeout=300 \
   --port=8080 \
-  --set-env-vars="HOST=0.0.0.0,NODE_ENV=production" \
-  --set-secrets="OPENAI_API_KEY=openai-api-key:latest" \
+  --set-env-vars="^|^HOST=0.0.0.0|NODE_ENV=production|MOUTHY_APPLE_AUDIENCE=com.mouthy.stg|MOUTHY_GOOGLE_CLIENT_ID=${google_client_id}" \
+  --set-secrets="OPENAI_API_KEY=openai-api-key:latest,MOUTHY_SESSION_SECRET=mouthy-session-secret:latest" \
   --update-labels="mouthy-commit=${head_commit}" \
   --quiet
 

@@ -6,6 +6,8 @@ import { assembleReview } from "../src/shared/review.ts";
 import { parseSessionSettings, SettingsError } from "../src/shared/scenarios.ts";
 import type { ChatTurn } from "../src/shared/types.ts";
 import { computeWpm, type SpeechSpan } from "../src/shared/wpm.ts";
+import { verifyIdentityToken, type IdentityJwk, type ProviderIdentity } from "../src/shared/identity.ts";
+import { readSession, signSession, type SessionProvider } from "../src/shared/session.ts";
 import { loadConfig, toPublicConfig, type AppConfig } from "./config.ts";
 import { judgePairs } from "./judge.ts";
 import { mintGeminiToken, mintOpenAIToken, sanitizeUpstream } from "./providers.ts";
@@ -18,10 +20,19 @@ export type AppDeps = {
 export function createApp(deps: AppDeps = {}): Express {
   const config = deps.config ?? loadConfig();
   const fetchImpl = deps.fetchImpl ?? fetch;
+  const jwksCache = new Map<string, { keys: IdentityJwk[]; expiresAt: number }>();
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "256kb" }));
-  const requireClient = clientGate(config.clientToken);
+  const requirePaid = paidAccess(config);
+
+  app.post("/api/auth/apple", async (req, res) => {
+    await issueSession(req, res, config, fetchImpl, jwksCache, "apple");
+  });
+
+  app.post("/api/auth/google", async (req, res) => {
+    await issueSession(req, res, config, fetchImpl, jwksCache, "google");
+  });
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
@@ -31,7 +42,7 @@ export function createApp(deps: AppDeps = {}): Express {
     res.json(toPublicConfig(config));
   });
 
-  app.post("/api/realtime/session", requireClient, async (req: Request, res: Response) => {
+  app.post("/api/realtime/session", requirePaid, async (req: Request, res: Response) => {
     const pub = toPublicConfig(config);
     if (!pub.browserVoiceImplemented) {
       res.status(409).json({ error: "provider_unavailable", message: pub.message });
@@ -63,7 +74,7 @@ export function createApp(deps: AppDeps = {}): Express {
     }
   });
 
-  app.post("/api/feedback/judge", requireClient, async (req, res) => {
+  app.post("/api/feedback/judge", requirePaid, async (req, res) => {
     const pairs = parseJudgePairs(req.body);
     if (!pairs) {
       res.status(400).json({ error: "bad_pairs", message: "質問と答えの組が不正です。" });
@@ -79,7 +90,7 @@ export function createApp(deps: AppDeps = {}): Express {
     res.json(result);
   });
 
-  app.post("/api/feedback/review", requireClient, async (req, res) => {
+  app.post("/api/feedback/review", requirePaid, async (req, res) => {
     const body = parseReviewBody(req.body);
     if (!body) {
       res.status(400).json({ error: "bad_review", message: "振り返りの入力が不正です。" });
@@ -112,7 +123,7 @@ export function createApp(deps: AppDeps = {}): Express {
     );
   });
 
-  app.post("/api/providers/gemini/token", requireClient, async (req, res) => {
+  app.post("/api/providers/gemini/token", requirePaid, async (req, res) => {
     if (!config.geminiApiKey) {
       res.status(503).json({
         error: "missing_api_key",
@@ -160,6 +171,102 @@ export function createApp(deps: AppDeps = {}): Express {
   }
 
   return app;
+}
+
+type JwksCache = Map<string, { keys: IdentityJwk[]; expiresAt: number }>;
+
+async function issueSession(
+  req: Request,
+  res: Response,
+  config: AppConfig,
+  fetchImpl: typeof fetch,
+  jwksCache: JwksCache,
+  provider: SessionProvider,
+) {
+  if (!config.sessionSecret) {
+    res.status(503).json({ error: "auth_unconfigured", message: "サインインの秘密鍵が未設定です。" });
+    return;
+  }
+  const body = req.body as { idToken?: unknown; nonce?: unknown; name?: unknown };
+  if (typeof body.idToken !== "string" || !body.idToken) {
+    res.status(400).json({ error: "bad_token", message: "ID トークンがありません。" });
+    return;
+  }
+  const audience = provider === "apple" ? config.appleAudience : config.googleClientId;
+  if (!audience) {
+    res.status(503).json({ error: "auth_unconfigured", message: "この方法のクライアント ID が未設定です。" });
+    return;
+  }
+  if (provider === "apple" && (typeof body.nonce !== "string" || !body.nonce)) {
+    res.status(400).json({ error: "bad_nonce", message: "Apple の nonce がありません。" });
+    return;
+  }
+  const keys = await loadJwks(provider, fetchImpl, jwksCache);
+  if (!keys) {
+    res.status(502).json({ error: "jwks_failed", message: "サインインの公開鍵を取得できませんでした。" });
+    return;
+  }
+  const identity: ProviderIdentity | null = verifyIdentityToken({
+    token: body.idToken,
+    keys,
+    audience,
+    issuers: provider === "apple"
+      ? ["https://appleid.apple.com"]
+      : ["https://accounts.google.com", "accounts.google.com"],
+    nonce: provider === "apple" ? (body.nonce as string) : null,
+  });
+  if (!identity) {
+    res.status(401).json({ error: "unauthorized", message: "サインインを確認できませんでした。" });
+    return;
+  }
+  const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : identity.name;
+  const minted = signSession({
+    sub: `${provider}:${identity.sub}`,
+    provider,
+    name,
+    secret: config.sessionSecret,
+  });
+  res.json({ token: minted.token, expiresAt: minted.expiresAt, provider, name });
+}
+
+async function loadJwks(provider: SessionProvider, fetchImpl: typeof fetch, jwksCache: JwksCache) {
+  const url = provider === "apple"
+    ? "https://appleid.apple.com/auth/keys"
+    : "https://www.googleapis.com/oauth2/v3/certs";
+  const cached = jwksCache.get(url);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) return cached.keys;
+  try {
+    const response = await fetchImpl(url);
+    if (!response.ok) return null;
+    const body = (await response.json()) as { keys?: IdentityJwk[] };
+    if (!Array.isArray(body.keys)) return null;
+    jwksCache.set(url, { keys: body.keys, expiresAt: now + 60 * 60 * 1000 });
+    return body.keys;
+  } catch {
+    return null;
+  }
+}
+
+function paidAccess(config: AppConfig) {
+  const fallback = clientGate(config.clientToken);
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (config.sessionSecret) {
+      const header = req.header("authorization") ?? "";
+      const token = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
+      if (!readSession(token, config.sessionSecret)) {
+        res.status(401).json({ error: "unauthorized", message: "サインインが必要です。" });
+        return;
+      }
+      next();
+      return;
+    }
+    if (config.nodeEnv === "production") {
+      res.status(503).json({ error: "auth_unconfigured", message: "サインインの設定が未完了です。" });
+      return;
+    }
+    fallback(req, res, next);
+  };
 }
 
 function clientGate(expected: string) {
