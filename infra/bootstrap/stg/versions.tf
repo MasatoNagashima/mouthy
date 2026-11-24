@@ -10,10 +10,10 @@ terraform {
 
   # 初回はローカルの状態ファイルで apply する (バケットがまだ無いため)。
   # apply のあと、下を有効にして `terraform init -migrate-state` でバケットへ移す。
-  # backend "gcs" {
-  #   bucket = "mouthy-stg-tfstate"
-  #   prefix = "bootstrap/stg"
-  # }
+  backend "gcs" {
+    bucket = "mouthy-stg-tfstate"
+    prefix = "bootstrap/stg"
+  }
 }
 
 provider "google" {
