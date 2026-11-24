@@ -61,7 +61,8 @@ jobs:
       - name: terraform plan (STG)
         if: vars.GCP_STG_WIF_PROVIDER != ''
         run: |
-          terraform init
+          # gha-stg-plan は状態バケットを読むだけ。lock ファイルを書けないので、init も plan も lock しない。
+          terraform init -lock=false
           set +e
           terraform plan -lock=false -no-color -detailed-exitcode > plan.txt 2>&1
           code=$?
