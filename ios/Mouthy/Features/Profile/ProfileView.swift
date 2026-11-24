@@ -57,6 +57,7 @@ struct ProfileView: View {
                 Section {
                     Button("サインアウト") { model.signOut() }
                     Button("アカウントを削除", role: .destructive) { confirmDelete = true }
+                        .disabled(model.deletingAccount)
                 } footer: {
                     Text("この端末のプロフィール、同意の記録、会話の添削結果を消します。音声の録音は残していません。")
                 }
@@ -67,7 +68,7 @@ struct ProfileView: View {
             .onChange(of: model.settings) { _, _ in model.save() }
             .sheet(isPresented: $editing) { editSheet }
             .confirmationDialog("アカウントを削除しますか？", isPresented: $confirmDelete, titleVisibility: .visible) {
-                Button("削除する", role: .destructive) { model.wipe() }
+                Button("削除する", role: .destructive) { Task { await model.deleteAccount() } }
                 Button("キャンセル", role: .cancel) {}
             } message: {
                 Text("この端末の記録は元に戻せません。")

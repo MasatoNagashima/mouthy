@@ -2,72 +2,112 @@ import Foundation
 import MouthyLogic
 
 extension AppModel {
-    func restoreSession() {
-        guard let raw = Keychain.load(account: Keychain.sessionAccount),
-              let data = raw.data(using: .utf8),
-              let stored = try? JSONDecoder.mouthy.decode(StoredSession.self, from: data),
-              !stored.isExpired
-        else {
-            Keychain.delete(account: Keychain.sessionAccount)
-            sessionToken = nil
-            SessionAccess.token = nil
-            isSignedIn = false
-            return
+    func api() -> APIClient {
+        var client = APIClient.fromBundle()
+        if isSignedIn || authenticating {
+            client.tokenProvider = { forceRefresh in
+                try await IDTokenSource.shared.token(forceRefresh: forceRefresh)
+            }
         }
-        sessionToken = stored.token
-        SessionAccess.token = stored.token
-        isSignedIn = true
-        if profile.name.isEmpty, let name = stored.name, !name.isEmpty {
-            profile.name = name
+        return client
+    }
+
+    /// Firebase にユーザーが残っていれば、/api/me が返ってからタブを開く。
+    func restoreIfNeeded() async {
+        guard restoringSession else { return }
+        authenticating = true
+        defer {
+            authenticating = false
+            restoringSession = false
+        }
+        do {
+            _ = try await api().me()
+            isSignedIn = true
+        } catch {
+            AccountAuth.signOut()
+            isSignedIn = false
         }
     }
 
-    func signIn(provider: LoginMethod, idToken: String, nonce: String?, name: String?) async {
-        busy = true
-        signInError = nil
-        defer { busy = false }
-        do {
-            let issued = try await APIClient.fromBundle().exchange(provider: provider, idToken: idToken, nonce: nonce, name: name)
-            let stored = StoredSession(token: issued.token, expiresAt: issued.expiresAt, provider: provider, name: name ?? issued.name)
-            guard let data = try? JSONEncoder.mouthy.encode(stored),
-                  let raw = String(data: data, encoding: .utf8),
-                  Keychain.save(raw, account: Keychain.sessionAccount)
-            else {
-                signInError = "サインインを端末に保存できませんでした。もう一度お試しください。"
-                return
-            }
-            sessionToken = issued.token
-            SessionAccess.token = issued.token
-            isSignedIn = true
-            lastLogin.save(provider)
-            lastLoginMethod = provider
-            if let name, !name.isEmpty { profile.name = name }
-            save()
-        } catch {
-            signInError = (error as? LocalizedError)?.errorDescription ?? "サインインできませんでした。もう一度お試しください。"
+    func signInWithApple(idToken: String, nonce: String, fullName: PersonNameComponents?) async {
+        await signIn(method: .apple) {
+            try await AccountAuth.signInWithApple(idToken: idToken, nonce: nonce, fullName: fullName)
         }
     }
 
     func signInWithGoogle() async {
+        await signIn(method: .google) {
+            try await AccountAuth.signInWithGoogle()
+        }
+    }
+
+    /// /api/me が返ってから isSignedIn = true にする。失敗したら Firebase のログインも消す。
+    private func signIn(method: LoginMethod, _ authenticate: () async throws -> (token: String, displayName: String?, isNewUser: Bool)) async {
+        busy = true
         signInError = nil
+        accountDeletedNotice = false
+        defer {
+            busy = false
+            authenticating = false
+        }
         do {
-            let google = try await AccountAuth.signInWithGoogle()
-            await signIn(provider: .google, idToken: google.idToken, nonce: nil, name: google.name)
-        } catch AccountAuthError.cancelled {
+            let session = try await authenticate()
+            authenticating = true
+            _ = try await api().me()
+            isSignedIn = true
+            lastLogin.save(method)
+            lastLoginMethod = method
+            if let name = session.displayName, !name.isEmpty, profile.name.isEmpty {
+                profile.name = name
+                save()
+            }
+        } catch let error as AccountAuthError where error == .cancelled {
             return
-        } catch AccountAuthError.missingGoogleClient {
-            signInError = "いまは Google でサインインできません。Apple で続けるか、設定を確認してください。"
         } catch {
-            signInError = "サインインできませんでした。もう一度お試しください。"
+            if authenticating {
+                AccountAuth.signOut()
+                isSignedIn = false
+            }
+            signInError = SignInFailure(error: error)
         }
     }
 
     func signOut() {
-        AccountAuth.signOutGoogle()
-        Keychain.delete(account: Keychain.sessionAccount)
-        sessionToken = nil
-        SessionAccess.token = nil
+        AccountAuth.signOut()
         isSignedIn = false
+        authenticating = false
         signInError = nil
+        deletingAccount = false
+    }
+
+    func deleteAccount() async {
+        guard !deletingAccount else { return }
+        deletingAccount = true
+        var appleCode: String?
+        let result = await AccountDeletionFlow.run(
+            reauthenticate: {
+                let session = try await AccountAuth.reauthenticateForDeletion()
+                appleCode = session.appleAuthorizationCode
+            },
+            revokeProvider: {
+                try await AccountAuth.revokeAppleForDeletion(appleAuthorizationCode: appleCode)
+            },
+            deleteOnServer: { try await self.api().deleteMe() },
+            finishProvider: { try await AccountAuth.finishDeletion() },
+            signOutAndClear: { self.clearAfterDeletion() },
+            isCancelled: { ($0 as? AccountAuthError) == .cancelled }
+        )
+        if case .failed(let error) = result {
+            toast = (error as? LocalizedError)?.errorDescription ?? "アカウントを削除できませんでした。"
+            deletingAccount = false
+        }
+    }
+
+    private func clearAfterDeletion() {
+        lastLogin.clear()
+        lastLoginMethod = nil
+        accountDeletedNotice = true
+        wipeLocal()
+        signOut()
     }
 }

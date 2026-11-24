@@ -6,8 +6,7 @@ import { assembleReview } from "../src/shared/review.ts";
 import { parseSessionSettings, SettingsError } from "../src/shared/scenarios.ts";
 import type { ChatTurn } from "../src/shared/types.ts";
 import { computeWpm, type SpeechSpan } from "../src/shared/wpm.ts";
-import { verifyIdentityToken, type IdentityJwk, type ProviderIdentity } from "../src/shared/identity.ts";
-import { readSession, signSession, type SessionProvider } from "../src/shared/session.ts";
+import { FirebaseIdTokenVerifier, type FirebaseIdentity } from "../src/shared/firebaseToken.ts";
 import { loadConfig, toPublicConfig, type AppConfig } from "./config.ts";
 import { judgePairs } from "./judge.ts";
 import { mintGeminiToken, mintOpenAIToken, sanitizeUpstream } from "./providers.ts";
@@ -15,23 +14,25 @@ import { mintGeminiToken, mintOpenAIToken, sanitizeUpstream } from "./providers.
 export type AppDeps = {
   fetchImpl?: typeof fetch;
   config?: AppConfig;
+  verifyFirebaseToken?: (token: string) => Promise<FirebaseIdentity | null>;
 };
 
 export function createApp(deps: AppDeps = {}): Express {
   const config = deps.config ?? loadConfig();
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const jwksCache = new Map<string, { keys: IdentityJwk[]; expiresAt: number }>();
+  const verifyFirebase = deps.verifyFirebaseToken ?? ((token: string) => new FirebaseIdTokenVerifier({ fetchImpl }).verify(token, config.googleCloudProject));
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "256kb" }));
-  const requirePaid = paidAccess(config);
+  const requirePaid = paidAccess(config, verifyFirebase);
 
-  app.post("/api/auth/apple", async (req, res) => {
-    await issueSession(req, res, config, fetchImpl, jwksCache, "apple");
+  app.get("/api/me", requirePaid, (_req, res) => {
+    const identity = res.locals.firebaseUser as FirebaseIdentity | undefined;
+    res.json(identity ?? { uid: "local", email: "" });
   });
 
-  app.post("/api/auth/google", async (req, res) => {
-    await issueSession(req, res, config, fetchImpl, jwksCache, "google");
+  app.delete("/api/me", requirePaid, (_req, res) => {
+    res.status(204).end();
   });
 
   app.get("/api/health", (_req, res) => {
@@ -173,99 +174,44 @@ export function createApp(deps: AppDeps = {}): Express {
   return app;
 }
 
-type JwksCache = Map<string, { keys: IdentityJwk[]; expiresAt: number }>;
-
-async function issueSession(
-  req: Request,
-  res: Response,
-  config: AppConfig,
-  fetchImpl: typeof fetch,
-  jwksCache: JwksCache,
-  provider: SessionProvider,
-) {
-  if (!config.sessionSecret) {
-    res.status(503).json({ error: "auth_unconfigured", message: "サインインの秘密鍵が未設定です。" });
-    return;
-  }
-  const body = req.body as { idToken?: unknown; nonce?: unknown; name?: unknown };
-  if (typeof body.idToken !== "string" || !body.idToken) {
-    res.status(400).json({ error: "bad_token", message: "ID トークンがありません。" });
-    return;
-  }
-  const audience = provider === "apple" ? config.appleAudience : config.googleClientId;
-  if (!audience) {
-    res.status(503).json({ error: "auth_unconfigured", message: "この方法のクライアント ID が未設定です。" });
-    return;
-  }
-  if (provider === "apple" && (typeof body.nonce !== "string" || !body.nonce)) {
-    res.status(400).json({ error: "bad_nonce", message: "Apple の nonce がありません。" });
-    return;
-  }
-  const keys = await loadJwks(provider, fetchImpl, jwksCache);
-  if (!keys) {
-    res.status(502).json({ error: "jwks_failed", message: "サインインの公開鍵を取得できませんでした。" });
-    return;
-  }
-  const identity: ProviderIdentity | null = verifyIdentityToken({
-    token: body.idToken,
-    keys,
-    audience,
-    issuers: provider === "apple"
-      ? ["https://appleid.apple.com"]
-      : ["https://accounts.google.com", "accounts.google.com"],
-    nonce: provider === "apple" ? (body.nonce as string) : null,
-  });
-  if (!identity) {
-    res.status(401).json({ error: "unauthorized", message: "サインインを確認できませんでした。" });
-    return;
-  }
-  const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : identity.name;
-  const minted = signSession({
-    sub: `${provider}:${identity.sub}`,
-    provider,
-    name,
-    secret: config.sessionSecret,
-  });
-  res.json({ token: minted.token, expiresAt: minted.expiresAt, provider, name });
-}
-
-async function loadJwks(provider: SessionProvider, fetchImpl: typeof fetch, jwksCache: JwksCache) {
-  const url = provider === "apple"
-    ? "https://appleid.apple.com/auth/keys"
-    : "https://www.googleapis.com/oauth2/v3/certs";
-  const cached = jwksCache.get(url);
-  const now = Date.now();
-  if (cached && cached.expiresAt > now) return cached.keys;
-  try {
-    const response = await fetchImpl(url);
-    if (!response.ok) return null;
-    const body = (await response.json()) as { keys?: IdentityJwk[] };
-    if (!Array.isArray(body.keys)) return null;
-    jwksCache.set(url, { keys: body.keys, expiresAt: now + 60 * 60 * 1000 });
-    return body.keys;
-  } catch {
-    return null;
-  }
-}
-
-function paidAccess(config: AppConfig) {
+function paidAccess(config: AppConfig, verifyFirebase: (token: string) => Promise<FirebaseIdentity | null>) {
   const fallback = clientGate(config.clientToken);
   return (req: Request, res: Response, next: NextFunction) => {
-    if (config.sessionSecret) {
-      const header = req.header("authorization") ?? "";
-      const token = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
-      if (!readSession(token, config.sessionSecret)) {
-        res.status(401).json({ error: "unauthorized", message: "サインインが必要です。" });
-        return;
+    void (async () => {
+      try {
+        if (config.nodeEnv !== "production") {
+          const header = req.header("authorization") ?? "";
+          const token = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
+          if (token && config.googleCloudProject) {
+            const identity = await verifyFirebase(token);
+            if (!identity) {
+              res.status(401).json({ error: "unauthorized", message: "サインインが必要です。" });
+              return;
+            }
+            res.locals.firebaseUser = identity;
+            next();
+            return;
+          }
+          fallback(req, res, next);
+          return;
+        }
+        if (!config.googleCloudProject) {
+          res.status(503).json({ error: "auth_unconfigured", message: "サインインの設定が未完了です。" });
+          return;
+        }
+        const header = req.header("authorization") ?? "";
+        const token = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
+        const identity = token ? await verifyFirebase(token) : null;
+        if (!identity) {
+          res.status(401).json({ error: "unauthorized", message: "サインインが必要です。" });
+          return;
+        }
+        res.locals.firebaseUser = identity;
+        next();
+      } catch (error) {
+        next(error);
       }
-      next();
-      return;
-    }
-    if (config.nodeEnv === "production") {
-      res.status(503).json({ error: "auth_unconfigured", message: "サインインの設定が未完了です。" });
-      return;
-    }
-    fallback(req, res, next);
+    })();
   };
 }
 

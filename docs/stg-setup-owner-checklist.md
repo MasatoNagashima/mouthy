@@ -39,25 +39,13 @@ printf '%s' 'sk-...' | gcloud secrets versions add openai-api-key \
   --project=mouthy-stg --data-file=-
 ```
 
-- [ ] セッション署名の秘密 `mouthy-session-secret` の入れ物は Terraform が作ります。**バージョンは自動では入りません。** 次の `stg-deploy` は、バージョンが無いと Cloud Run の新しいリビジョンを起動できず失敗します。その間、いま動いているリビジョン（認証なし）が残ります。マージの前か直後に、`mouthy-stg` にログインした状態で次を実行してください。
+- [ ] サインインは Firebase Auth（Apple と Google だけ）です。自前の `MOUTHY_SESSION_SECRET` は使いません。本番（`NODE_ENV=production`）の `/api/me`、`/api/realtime/session`、`/api/feedback/judge`、`/api/feedback/review`、`/api/providers/gemini/token` は Firebase の ID トークンが必要です。`GOOGLE_CLOUD_PROJECT` が空の本番は 503 で、URL を知っていても OpenAI のトークンは発行しません。`GET /api/health` は 200 のままです。
+- [ ] `MOUTHY_CLIENT_TOKEN` は STG では使いません。Xcode Cloud の変数 `MOUTHY_GOOGLE_CLIENT_ID` と `MOUTHY_GOOGLE_REVERSED_CLIENT_ID` も使いません。手元で `NODE_ENV` が `production` でないときだけ、空の `MOUTHY_CLIENT_TOKEN` なら従来どおりチェックしません。
+- [ ] 以前の入れ物 `mouthy-session-secret` が残っていても、Cloud Run にはマウントしません。消すなら（任意）:
 
 ```bash
-openssl rand -base64 32 | gcloud secrets versions add mouthy-session-secret \
-  --project=mouthy-stg --data-file=-
+gcloud secrets delete mouthy-session-secret --project=mouthy-stg --quiet
 ```
-
-入れ物がまだ無い（最初の apply の前）なら、先に入れ物を作ります。
-
-```bash
-gcloud secrets create mouthy-session-secret \
-  --project=mouthy-stg \
-  --replication-policy=user-managed \
-  --locations=asia-northeast1
-```
-
-この秘密が入ると、`/api/realtime/session`、`/api/feedback/judge`、`/api/feedback/review`、`/api/providers/gemini/token` は `Authorization: Bearer` のセッショントークンが必要です。`MOUTHY_CLIENT_TOKEN` は見ません。秘密が空の本番（`NODE_ENV=production`）では、これらの経路は 503 で、URL を知っていても OpenAI のトークンは発行しません。`GET /api/health` は 200 のままです。
-
-- [ ] `MOUTHY_CLIENT_TOKEN` は STG では使いません。Xcode Cloud にも Secret Manager にも足さないでください。手元の開発で `MOUTHY_SESSION_SECRET` が空、かつ `NODE_ENV` が `production` でないときだけ、従来の `X-Mouthy-Client` が残ります。
 
 `GEMINI_API_KEY` は STG では使いません。ローカルの `.env` だけです。
 
@@ -82,20 +70,14 @@ Variables（Settings → Secrets and variables → Actions → **Variables**。�
 Xcode プロジェクトのターゲットとスキームは **Mouthy STG** の 1 つだけです。本番ターゲットはありません。表示名（`PRODUCT_NAME` と `CFBundleDisplayName`）も **Mouthy STG** で、ビルド成果物は `Mouthy STG.app` です。Swift モジュール名（`PRODUCT_MODULE_NAME`）は `Mouthy` のままです。バンドル ID は `com.mouthy.stg`。`DEVELOPMENT_TEAM` は Shadowly の公開プロジェクトと同じ `P975GG75YV` を仮に入れてあります。
 
 - [ ] [developer.apple.com](https://developer.apple.com) でチーム ID が `P975GG75YV` でなければ、`ios/Mouthy.xcodeproj/project.pbxproj` の `DEVELOPMENT_TEAM` を差し替える。
-- [ ] Identifiers に App ID **`com.mouthy.stg`** を作る。Capability は **Sign in with Apple**（Primary App ID はこの App ID 自体。ネイティブの Sign in with Apple に Services ID は要りません）。Push 通知は使っていない。
-- [ ] Xcode のターゲット「Mouthy STG」の Signing & Capabilities に Sign in with Apple が出ていること（`ios/Mouthy.entitlements` に入っています）。App ID 側で Capability を有効にしたあと、Xcode Cloud の署名を一度通してください。
+- [ ] Identifiers に App ID **`com.mouthy.stg`** を作る。Capability は **Sign in with Apple**。Push 通知は使っていない。
+- [ ] Firebase の Apple プロバイダ用に、Services ID（例: `com.mouthy.stg.signin`）を作る。Sign in with Apple を有効にし、返却 URL は `https://mouthy-stg.firebaseapp.com/__/auth/handler`。ドメインは `mouthy-stg.firebaseapp.com`。
+- [ ] Keys で Sign in with Apple のキーを作り、`.p8` を一度だけダウンロードする。Key ID とチーム ID `P975GG75YV` を控える。`.p8` はリポジトリに置かない。
+- [ ] Xcode のターゲット「Mouthy STG」の Signing & Capabilities に Sign in with Apple が出ていること（`ios/Mouthy.entitlements` に入っています）。
 - [ ] 署名は Automatic（Xcode / Xcode Cloud が Development と Distribution の証明書とプロビジョニングプロファイルを作る）。手元に書き出した `.p12` や `.mobileprovision` はリポジトリに置かない。
 - [ ] App Store Connect にアプリを作る。バンドル ID は `com.mouthy.stg`。アプリ名は **Mouthy STG**。SKU は任意（例: `mouthy-stg`）。
 - [ ] Xcode Cloud をそのアプリで有効にし、リポジトリ `MasatoNagashima/mouthy` を接続する。プロダクト名は **Mouthy STG**（ターゲット「Mouthy STG」に 1 つ）。
-- [ ] ワークフロー名は **Deploy Mouthy STG**。スキーム `Mouthy STG`。開始条件は `main` の iOS 変更。アクションは Archive。配布先は TestFlight の内部テスト。`ci_post_clone.sh` が `ios/MouthyLogic` の `swift test` を流す。
-- [ ] そのワークフローの環境変数（Xcode Cloud → ワークフロー → Environment）に、値をリポジトリへ書かずに次の 2 つを入れる。名前はこのとおり。
-
-| 名前 | 値 |
-| --- | --- |
-| `MOUTHY_GOOGLE_CLIENT_ID` | Google Cloud Console で作った iOS クライアント ID（`....apps.googleusercontent.com`） |
-| `MOUTHY_GOOGLE_REVERSED_CLIENT_ID` | その ID の逆引き。`123-abc.apps.googleusercontent.com` なら `com.googleusercontent.apps.123-abc` |
-
-`ios/Config/stg/Mouthy.xcconfig` がこの 2 つを `GID_CLIENT_ID` と `GOOGLE_REVERSED_CLIENT_ID` に渡し、Info.plist の `GIDClientID` / `GoogleReversedClientID` になります。ビルドフェーズ `ios/ci_scripts/embed_google_url_scheme.sh` が逆引き ID を URL scheme に書きます。空のあいだは URL scheme を埋め込まず、Google ボタンは「いまは Google でサインインできません」と出します。Apple はこの変数なしで動きます。
+- [ ] ワークフロー名は **Deploy Mouthy STG**。スキーム `Mouthy STG`。開始条件は `main` の iOS 変更。アクションは Archive。配布先は TestFlight の内部テスト。`ci_post_clone.sh` が `ios/MouthyLogic` の `swift test` を流す。Google のクライアント ID を Xcode Cloud の環境変数には入れない。`ios/Mouthy/GoogleService-Info.plist` がビルドに入る。
 - [ ] 内部テスターの Apple ID を TestFlight に追加する。
 - [ ] **App Store Connect API キー**（Issuer ID、Key ID、`.p8`）は、このリポジトリの GitHub Actions も Xcode Cloud も使いません。Xcode Cloud は Apple ID の接続でアップロードします。あとから Fastlane などで外から上げるときにだけ、GitHub Secrets の `APPSTORE_API_KEY_ID`、`APPSTORE_API_ISSUER_ID`、`APPSTORE_API_PRIVATE_KEY` に入れてください。`.p8` はコミットしない。
 
@@ -106,19 +88,84 @@ Cloud Run の URL が `stg-deploy` のログ（または `terraform output api_u
 
 マイクの使用目的文は「AIと英語で会話するために使います。録音は保存しません。」です。暗号化は非免除ではない（`ITSAppUsesNonExemptEncryption = false`）。輸出コンプライアンスの質問では、標準の HTTPS のみ、と答えられます。プライバシーポリシーの公開 URL はまだ無く、アプリ内の文面は下書きです。審査に出す前に URL を用意してください。
 
-サインインは Apple または Google が必須です。タブ（ホーム、シーン、記録、プロフィール）はサインインのあとだけ開きます。セッションはアプリが発行する JWT で、キーチェーン（`com.mouthy.stg`）に 30 日残します。前回の方法は「前回のログイン」と出て、サインアウトでは消えず、アカウント削除で消えます。
+サインインは Apple または Google が必須です。タブは、Firebase のサインインのあと `GET /api/me` が成功してから開きます。セッションは Firebase Auth がキーチェーンに持ちます。前回の方法は「前回のログイン」と出て、サインアウトでは消えず、アカウント削除で消えます。`GoogleService-Info.plist` が無いビルドは、サインインを「いまはこの方法でサインインできません」と出して止まります。
 
-## 4b. Google ログイン（`mouthy-stg` の iOS クライアント）
+## 4b. Firebase（既存の GCP プロジェクト `mouthy-stg`）
 
-秘密ではありません。クライアント ID は Xcode Cloud の変数と、サーバー用に `infra/google-client.json` の `iosClientId` へ入れます。JSON を空のままにすると Google のサインインは 503 です。
+別の Firebase プロジェクトは作りません。Terraform は Firebase を管理しません（Shadowly と同じ。`gha-stg-deploy` は Firebase Admin を持たない）。プロジェクトオーナーが、`mouthy-stg` にログインした状態で次を実行します。
 
-- [ ] [認証情報](https://console.cloud.google.com/apis/credentials?project=mouthy-stg) を開く（プロジェクトは **mouthy-stg**）。
-- [ ] 「認証情報を作成」→「OAuth クライアント ID」。同意画面が未作成なら先に作ります。User Type は External、アプリ名は Mouthy STG、サポートメールは本人のアドレス。スコープは追加しない（openid / email / profile は Google ログインの既定）。
-- [ ] アプリケーションの種類は **iOS**。名前は `Mouthy STG`。バンドル ID は **`com.mouthy.stg`**。App Store ID と Team ID は空でよい（Team ID を入れるなら `P975GG75YV`）。
-- [ ] 作成後のクライアント ID を、上の Xcode Cloud 変数 `MOUTHY_GOOGLE_CLIENT_ID` と `infra/google-client.json` の `iosClientId` に同じ文字列で入れる。逆引き ID はコンソールの「iOS URL スキーム」に出ます。それを `MOUTHY_GOOGLE_REVERSED_CLIENT_ID` に入れる。
-- [ ] クライアントシークレットは iOS クライアントには出ません。作らないでください。
+```bash
+gcloud services enable firebase.googleapis.com identitytoolkit.googleapis.com \
+  --project=mouthy-stg
 
-Apple の ID トークンは `https://appleid.apple.com/auth/keys` で検証し、audience は `com.mouthy.stg` です。Google は `https://www.googleapis.com/oauth2/v3/certs` で、audience は iOS クライアント ID です。
+# 既存の GCP プロジェクトに Firebase を足す（長い操作）。
+curl -sS -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: mouthy-stg" \
+  "https://firebase.googleapis.com/v1beta1/projects/mouthy-stg:addFirebase"
+
+# Identity Platform を初期化する。
+curl -sS -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: mouthy-stg" \
+  -H "Content-Type: application/json" \
+  "https://identitytoolkit.googleapis.com/v2/projects/mouthy-stg/identityPlatform:initializeAuth" \
+  -d '{}'
+
+# iOS アプリ。bundleId は com.mouthy.stg、表示名は Mouthy STG。
+curl -sS -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: mouthy-stg" \
+  -H "Content-Type: application/json" \
+  "https://firebase.googleapis.com/v1beta1/projects/mouthy-stg/iosApps" \
+  -d '{"bundleId":"com.mouthy.stg","displayName":"Mouthy STG"}'
+```
+
+返事の `name` の末尾（`1:数字:ios:...`）が APP_ID です。plist を取って、このパスにコミットします。
+
+```bash
+APP_ID='1:637092712725:ios:________'
+curl -sS \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: mouthy-stg" \
+  "https://firebase.googleapis.com/v1beta1/projects/mouthy-stg/iosApps/${APP_ID}/config" \
+  | python3 -c 'import json,sys,base64; print(base64.b64decode(json.load(sys.stdin)["configFileContents"]).decode())' \
+  > ios/Mouthy/GoogleService-Info.plist
+```
+
+`firebase` CLI がある場合の同じ操作:
+
+```bash
+firebase projects:addfirebase mouthy-stg
+firebase apps:create IOS "Mouthy STG" --bundle-id=com.mouthy.stg --project=mouthy-stg
+firebase apps:sdkconfig IOS "$APP_ID" --project=mouthy-stg -o ios/Mouthy/GoogleService-Info.plist
+```
+
+Google プロバイダは、Firebase が自動で作る **ウェブ** クライアントの ID とシークレットを使います（iOS クライアントの ID ではない）。[認証情報](https://console.cloud.google.com/apis/credentials?project=mouthy-stg) の「Web client (auto created by Google Service)」から控えます。
+
+```bash
+curl -sS -X PATCH \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: mouthy-stg" \
+  -H "Content-Type: application/json" \
+  "https://identitytoolkit.googleapis.com/v2/projects/mouthy-stg/defaultSupportedIdpConfigs/google.com?updateMask=enabled,clientId,clientSecret" \
+  -d '{"enabled":true,"clientId":"WEB_CLIENT_ID","clientSecret":"WEB_CLIENT_SECRET"}'
+```
+
+Apple プロバイダの `.p8` はコンソールで作った鍵です。ファイルから改行を `\n` にした文字列を `PRIVATE_KEY` に入れます。
+
+```bash
+curl -sS -X PATCH \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: mouthy-stg" \
+  -H "Content-Type: application/json" \
+  "https://identitytoolkit.googleapis.com/v2/projects/mouthy-stg/defaultSupportedIdpConfigs/apple.com?updateMask=enabled,clientId,appleSignInConfig" \
+  -d '{"enabled":true,"clientId":"com.mouthy.stg.signin","appleSignInConfig":{"codeFlowConfig":{"teamId":"P975GG75YV","keyId":"KEY_ID","privateKey":"PRIVATE_KEY"}}}'
+```
+
+メールとパスワードのプロバイダは有効にしないでください。
+
+同意画面が未作成なら、[OAuth 同意画面](https://console.cloud.google.com/auth/overview?project=mouthy-stg) で External、アプリ名 Mouthy STG、サポートメールは本人のアドレスにします。これはコンソールだけの作業です。
 
 ## 5. 動作確認
 

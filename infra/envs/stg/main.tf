@@ -3,13 +3,11 @@
 # Secret Manager の値 (OpenAI の鍵) は Terraform に置かない。
 
 locals {
-  project        = jsondecode(file("${path.module}/../../project.json"))
-  project_id     = local.project.project_id
-  region         = local.project.region
-  registry       = "${local.region}-docker.pkg.dev/${local.project_id}/mouthy"
-  openai_secret  = "openai-api-key"
-  session_secret = "mouthy-session-secret"
-  google_client  = jsondecode(file("${path.module}/../../google-client.json"))
+  project       = jsondecode(file("${path.module}/../../project.json"))
+  project_id    = local.project.project_id
+  region        = local.project.region
+  registry      = "${local.region}-docker.pkg.dev/${local.project_id}/mouthy"
+  openai_secret = "openai-api-key"
 }
 
 resource "google_project_service" "apis" {
@@ -63,28 +61,22 @@ resource "google_secret_manager_secret_iam_member" "openai_accessor" {
   member    = module.api_sa.member
 }
 
-# 値（セッション署名の秘密）は Terraform に置かない。入れ物だけ作る。
-# バージョンが無いと、この秘密を参照する Cloud Run リビジョンは起動しない。
-resource "google_secret_manager_secret" "session" {
-  project   = local.project_id
-  secret_id = local.session_secret
+# 自前 JWT 用の mouthy-session-secret はもう使わない。状態に残っていても消さない
+# （gha-stg-deploy は Secret Manager の削除権限を持たない）。
+removed {
+  from = google_secret_manager_secret.session
 
-  replication {
-    user_managed {
-      replicas {
-        location = local.region
-      }
-    }
+  lifecycle {
+    destroy = false
   }
-
-  depends_on = [google_project_service.apis]
 }
 
-resource "google_secret_manager_secret_iam_member" "session_accessor" {
-  project   = local.project_id
-  secret_id = google_secret_manager_secret.session.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = module.api_sa.member
+removed {
+  from = google_secret_manager_secret_iam_member.session_accessor
+
+  lifecycle {
+    destroy = false
+  }
 }
 
 module "registry" {
@@ -116,20 +108,14 @@ module "api" {
   service_max_instances = 20
   startup_probe_path    = "/api/health"
   env = {
-    HOST                    = { value = "0.0.0.0" }
-    NODE_ENV                = { value = "production" }
-    OPENAI_API_KEY          = { secret = local.openai_secret }
-    MOUTHY_SESSION_SECRET   = { secret = local.session_secret }
-    MOUTHY_APPLE_AUDIENCE   = { value = "com.mouthy.stg" }
-    MOUTHY_GOOGLE_CLIENT_ID = { value = local.google_client.iosClientId }
+    HOST                 = { value = "0.0.0.0" }
+    NODE_ENV             = { value = "production" }
+    GOOGLE_CLOUD_PROJECT = { value = local.project_id }
+    OPENAI_API_KEY       = { secret = local.openai_secret }
   }
   invokers = ["allUsers"]
 
-  depends_on = [
-    module.registry,
-    google_secret_manager_secret.openai,
-    google_secret_manager_secret.session,
-  ]
+  depends_on = [module.registry, google_secret_manager_secret.openai]
 }
 
 # デプロイ用 SA は bootstrap が作る。ここは「その SA が API として動ける」「イメージを読める」だけを足す。

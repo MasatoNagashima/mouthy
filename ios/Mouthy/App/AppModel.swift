@@ -18,11 +18,15 @@ final class AppModel {
     var toast: String?
     var loadFailed = false
     var isSignedIn = false
-    var sessionToken: String?
+    var restoringSession = false
     var lastLoginMethod: LoginMethod?
     var busy = false
-    var signInError: String?
+    var signInError: SignInFailure?
+    var accountDeletedNotice = false
+    var deletingAccount = false
     let lastLogin = LastLoginStore()
+    /// Firebase のサインインが通ってから /api/me が返るまでの間。リクエストに ID トークンを付ける。
+    var authenticating = false
 
     private let fileURL: URL
     private var ready = false
@@ -57,7 +61,7 @@ final class AppModel {
         }
         ready = true
         lastLoginMethod = lastLogin.method
-        restoreSession()
+        restoringSession = AccountAuth.hasSignedInUser()
     }
 
     func reload() {
@@ -94,10 +98,7 @@ final class AppModel {
         sessions.first { $0.id == id }
     }
 
-    func wipe() {
-        lastLogin.clear()
-        lastLoginMethod = nil
-        signOut()
+    func wipeLocal() {
         profile = .empty
         settings = .standard
         sessions = []

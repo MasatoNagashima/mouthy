@@ -1,18 +1,25 @@
 /**
  * @vitest-environment node
  */
-import { createHash, createSign, generateKeyPairSync } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterEach, describe, expect, test } from "vitest";
 import { createApp } from "../server/app.ts";
 import { loadConfig } from "../server/config.ts";
-import { verifyIdentityToken } from "../src/shared/identity.ts";
-import { readSession, signSession } from "../src/shared/session.ts";
+import {
+  CLOCK_SKEW_SECONDS,
+  clearFirebaseCertCache,
+  FirebaseIdTokenVerifier,
+  identityFromClaims,
+  maxAgeSeconds,
+} from "../src/shared/firebaseToken.ts";
 
 const servers: Server[] = [];
+const PROJECT = "mouthy-stg";
 
 afterEach(async () => {
+  clearFirebaseCertCache();
   await Promise.all(
     servers.splice(0).map(
       (server) =>
@@ -23,62 +30,64 @@ afterEach(async () => {
   );
 });
 
-function b64url(value: string): string {
-  return Buffer.from(value).toString("base64url");
-}
-
-function signedToken(claims: Record<string, unknown>, kid = "test-key") {
-  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  const jwk = publicKey.export({ format: "jwk" }) as { kid?: string };
-  jwk.kid = kid;
-  const header = b64url(JSON.stringify({ alg: "RS256", kid }));
-  const payload = b64url(JSON.stringify(claims));
-  const signature = createSign("RSA-SHA256").update(`${header}.${payload}`).sign(privateKey).toString("base64url");
-  return { token: `${header}.${payload}.${signature}`, jwk };
-}
-
-describe("session token", () => {
-  test("round-trips and rejects a bad signature or an expired token", () => {
-    const minted = signSession({ sub: "apple:abc", provider: "apple", name: "青木", secret: "test-secret", now: 1_000 });
-    expect(readSession(minted.token, "test-secret", 1_000)?.name).toBe("青木");
-    expect(readSession(minted.token, "other-secret", 1_000)).toBeNull();
-    expect(readSession(minted.token, "test-secret", 1_000 + 31 * 24 * 60 * 60)).toBeNull();
-  });
-});
-
-describe("provider identity token", () => {
-  test("accepts an Apple token only for this bundle and the matching nonce", () => {
+describe("firebase id token", () => {
+  test("accepts a token for this project and rejects the wrong issuer", () => {
     const now = 1_700_000_000;
-    const nonce = "raw-nonce";
-    const nonceHash = createHash("sha256").update(nonce).digest("hex");
-    const { token, jwk } = signedToken({
-      iss: "https://appleid.apple.com",
-      aud: "com.mouthy.stg",
+    const claims = {
+      iss: `https://securetoken.google.com/${PROJECT}`,
+      aud: PROJECT,
       exp: now + 60,
-      sub: "apple-user",
-      nonce: nonceHash,
+      iat: now,
+      user_id: "user-1",
+      email: "a@b.c",
+    };
+    expect(identityFromClaims(claims, PROJECT, now)).toEqual({ uid: "user-1", email: "a@b.c" });
+    expect(identityFromClaims({ ...claims, iss: "https://securetoken.google.com/other" }, PROJECT, now)).toBeNull();
+    expect(identityFromClaims({ ...claims, exp: now - CLOCK_SKEW_SECONDS - 1 }, PROJECT, now)).toBeNull();
+  });
+
+  test("reuses cached certs until max-age and hides token text in errors", async () => {
+    expect(maxAgeSeconds({ "cache-control": "max-age=120" })).toBe(120);
+    expect(maxAgeSeconds(undefined)).toBe(300);
+    let calls = 0;
+    const now = [1_000_000];
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ kid: "not-a-cert" }), {
+        status: 200,
+        headers: { "cache-control": "public, max-age=60" },
+      });
+    }) as typeof fetch;
+    const verifier = new FirebaseIdTokenVerifier({ fetchImpl, clock: () => now[0] });
+    await verifier.verify("aa.bb.cc", PROJECT);
+    await verifier.verify("aa.bb.cc", PROJECT);
+    expect(calls).toBe(1);
+    now[0] += 61_000;
+    await verifier.verify("aa.bb.cc", PROJECT);
+    expect(calls).toBe(2);
+
+    const leaking = new FirebaseIdTokenVerifier({
+      verify: () => {
+        throw new Error("Can't parse segment: b'payload-secret'");
+      },
     });
-    expect(verifyIdentityToken({
-      token,
-      keys: [jwk],
-      audience: "com.mouthy.stg",
-      issuers: ["https://appleid.apple.com"],
-      nonce,
-      now,
-    })?.sub).toBe("apple-user");
-    expect(verifyIdentityToken({
-      token,
-      keys: [jwk],
-      audience: "com.mouthy.app",
-      issuers: ["https://appleid.apple.com"],
-      nonce,
-      now,
-    })).toBeNull();
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (message?: unknown) => {
+      warnings.push(String(message));
+    };
+    try {
+      expect(await leaking.verify("aa.bb.cc", PROJECT)).toBeNull();
+    } finally {
+      console.warn = original;
+    }
+    expect(warnings.join("\n")).toContain("malformed token");
+    expect(warnings.join("\n")).not.toContain("payload-secret");
   });
 });
 
 describe("paid routes", () => {
-  test("production without a session secret does not mint an OpenAI token", async () => {
+  test("production without a Firebase project does not mint an OpenAI token", async () => {
     const base = await start(createApp({ config: loadConfig({ NODE_ENV: "production", OPENAI_API_KEY: "sk-test" }) }));
     const response = await fetch(`${base}/api/realtime/session`, {
       method: "POST",
@@ -86,14 +95,19 @@ describe("paid routes", () => {
       body: "{}",
     });
     expect(response.status).toBe(503);
-    const health = await fetch(`${base}/api/health`);
-    expect(health.status).toBe(200);
+    expect((await fetch(`${base}/api/health`)).status).toBe(200);
   });
 
-  test("a session secret requires a bearer token and ignores the old client token", async () => {
-    const secret = "stg-session-secret";
+  test("production requires a Firebase ID token and ignores the old client token", async () => {
+    const verifyFirebaseToken = async (token: string) => (token === "good" ? { uid: "user-1", email: "a@b.c" } : null);
     const base = await start(createApp({
-      config: loadConfig({ MOUTHY_SESSION_SECRET: secret, MOUTHY_CLIENT_TOKEN: "old-client", OPENAI_API_KEY: "" }),
+      config: loadConfig({
+        NODE_ENV: "production",
+        GOOGLE_CLOUD_PROJECT: PROJECT,
+        MOUTHY_CLIENT_TOKEN: "old-client",
+        OPENAI_API_KEY: "",
+      }),
+      verifyFirebaseToken,
     }));
     const denied = await fetch(`${base}/api/feedback/review`, {
       method: "POST",
@@ -101,41 +115,33 @@ describe("paid routes", () => {
       body: "{}",
     });
     expect(denied.status).toBe(401);
-    const minted = signSession({ sub: "google:user", provider: "google", secret, now: Math.floor(Date.now() / 1000) });
+    const me = await fetch(`${base}/api/me`, { headers: { Authorization: "Bearer good" } });
+    expect(me.status).toBe(200);
+    expect(await me.json()).toEqual({ uid: "user-1", email: "a@b.c" });
     const allowed = await fetch(`${base}/api/feedback/review`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${minted.token}` },
+      headers: { "Content-Type": "application/json", Authorization: "Bearer good" },
       body: JSON.stringify({ mode: "mock", turns: [], checkpointsDone: 0, checkpointsTotal: 1 }),
     });
     expect(allowed.status).toBe(200);
   });
+});
 
-  test("apple sign-in issues a session after the provider key verifies", async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const nonce = "raw-nonce";
-    const nonceHash = createHash("sha256").update(nonce).digest("hex");
-    const { token, jwk } = signedToken({
-      iss: "https://appleid.apple.com",
-      aud: "com.mouthy.stg",
-      exp: now + 60,
-      sub: "apple-user",
-      nonce: nonceHash,
-      name: "青木",
-    });
-    const fetchImpl = (async () => new Response(JSON.stringify({ keys: [jwk] }), { status: 200 })) as typeof fetch;
-    const base = await start(createApp({
-      config: loadConfig({ MOUTHY_SESSION_SECRET: "session-secret", MOUTHY_APPLE_AUDIENCE: "com.mouthy.stg" }),
-      fetchImpl,
-    }));
-    const response = await fetch(`${base}/api/auth/apple`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken: token, nonce, name: "青木" }),
-    });
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as { token: string; provider: string };
-    expect(body.provider).toBe("apple");
-    expect(readSession(body.token, "session-secret")?.sub).toBe("apple:apple-user");
+describe("ios sign-in gate", () => {
+  test("waits for /api/me and uses Firebase Auth, not a custom session", () => {
+    const model = readFileSync("ios/Mouthy/App/AppModel+Auth.swift", "utf8");
+    const auth = readFileSync("ios/Mouthy/App/AccountAuth.swift", "utf8");
+    const client = readFileSync("ios/Mouthy/App/APIClient.swift", "utf8");
+    const me = model.indexOf("api().me()");
+    const signedIn = model.indexOf("isSignedIn = true");
+    expect(me).toBeGreaterThan(-1);
+    expect(signedIn).toBeGreaterThan(me);
+    expect(auth).toContain("OAuthProvider.appleCredential");
+    expect(auth).toContain("GoogleAuthProvider.credential");
+    expect(auth).toContain("FirebaseApp.configure()");
+    expect(auth).toContain("getIDToken(forcingRefresh: forcingRefresh)");
+    expect(auth).not.toContain("MOUTHY_SESSION");
+    expect(client).toContain("forceRefresh: true");
   });
 });
 

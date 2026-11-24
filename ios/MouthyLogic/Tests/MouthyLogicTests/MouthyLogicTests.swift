@@ -139,6 +139,38 @@ final class MouthyLogicTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
     }
 
+    func testAccountDeletionClearsOnlyAfterTheServerAgrees() async {
+        let cancelled = await AccountDeletionFlow.run(
+            reauthenticate: { throw TestCancel() },
+            deleteOnServer: {},
+            finishProvider: {},
+            signOutAndClear: { XCTFail("cancelled deletion must keep the account") },
+            isCancelled: { $0 is TestCancel }
+        )
+        XCTAssertFalse(cancelled.isDeleted)
+
+        let rejected = await AccountDeletionFlow.run(
+            reauthenticate: {},
+            deleteOnServer: { throw TestFailure() },
+            finishProvider: {},
+            signOutAndClear: { XCTFail("a failed server delete must keep the account") },
+            isCancelled: { _ in false }
+        )
+        if case .failed = rejected {} else { XCTFail("expected failure") }
+
+        var cleared = false
+        let deleted = await AccountDeletionFlow.run(
+            reauthenticate: {},
+            revokeProvider: { throw TestFailure() },
+            deleteOnServer: {},
+            finishProvider: { throw TestFailure() },
+            signOutAndClear: { cleared = true },
+            isCancelled: { _ in false }
+        )
+        XCTAssertTrue(deleted.isDeleted)
+        XCTAssertTrue(cleared)
+    }
+
     func testCorrectionsRoundTripThroughJSON() throws {
         let correction = ReviewCorrection(id: "c1", tag: "時制", original: "I join", better: "I joined", reasonJa: "過去形")
         let phrase = StuckPhrase(id: "s1", phrase: "to be honest", meaningJa: "正直に言うと", reason: "6秒の間")
@@ -171,3 +203,6 @@ final class MouthyLogicTests: XCTestCase {
         XCTAssertEqual(ProgressMath.talkTimeLabel(seconds: 3 * 3600 + 12 * 60), "3時間12分")
     }
 }
+
+private struct TestCancel: Error {}
+private struct TestFailure: Error {}

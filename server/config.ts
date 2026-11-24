@@ -12,12 +12,11 @@ export type AppConfig = {
   openaiJudgeModel: string;
   fillers: string[];
   port: number;
-  /** 空なら、本番以外ではクライアントトークンだけを見る。入っているとセッショントークンが必須。 */
+  /** 空なら、本番以外ではチェックしない。本番の有料 API は Firebase の ID トークンが必須で、これは見ない。 */
   clientToken: string;
-  sessionSecret: string;
   nodeEnv: string;
-  appleAudience: string;
-  googleClientId: string;
+  /** Firebase プロジェクト ID。STG は mouthy-stg。空の本番は有料 API を 503 にする。 */
+  googleCloudProject: string;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -34,10 +33,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     fillers: parseFillerList(env.FILLER_WORDS),
     port: Number(env.PORT) > 0 ? Number(env.PORT) : 8787,
     clientToken: (env.MOUTHY_CLIENT_TOKEN ?? "").trim(),
-    sessionSecret: (env.MOUTHY_SESSION_SECRET ?? "").trim(),
     nodeEnv: (env.NODE_ENV ?? "").trim(),
-    appleAudience: (env.MOUTHY_APPLE_AUDIENCE ?? "").trim() || "com.mouthy.stg",
-    googleClientId: (env.MOUTHY_GOOGLE_CLIENT_ID ?? "").trim(),
+    googleCloudProject: (env.GOOGLE_CLOUD_PROJECT ?? env.GCLOUD_PROJECT ?? "").trim(),
   };
 }
 
