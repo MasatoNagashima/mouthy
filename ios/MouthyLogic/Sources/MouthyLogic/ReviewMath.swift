@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ReviewCorrection: Equatable, Identifiable, Sendable {
+public struct ReviewCorrection: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var tag: String
     public var original: String
@@ -16,7 +16,7 @@ public struct ReviewCorrection: Equatable, Identifiable, Sendable {
     }
 }
 
-public struct StuckPhrase: Equatable, Identifiable, Sendable {
+public struct StuckPhrase: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var phrase: String
     public var meaningJa: String

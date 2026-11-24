@@ -244,8 +244,12 @@ final class TalkSession {
     }
 
     private func makeSession() async -> PracticeSession {
-        let finals = book.ordered.filter { $0.state == .final && !$0.text.isEmpty && $0.text != TranscriptBook.pendingText }
-        let learner = finals.filter { $0.speaker == .learner }.map(\.text)
+        let finals = book.ordered.filter { (utterance: Utterance) in
+            utterance.state == BubbleState.final && !utterance.text.isEmpty && utterance.text != TranscriptBook.pendingText
+        }
+        let learner = finals.compactMap { (utterance: Utterance) -> String? in
+            utterance.speaker == Speaker.learner ? utterance.text : nil
+        }
         let words = learner.reduce(0) { $0 + SpokenWords.count($1) }
         let asked = learner.contains { SpokenWords.questionCount($0) > 0 || SpokenWords.count($0) >= 12 }
         let levels: [ScoreFormula.Level] = learner.isEmpty ? [] : Array(repeating: .answers, count: learner.count)

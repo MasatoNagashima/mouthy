@@ -99,7 +99,7 @@ struct OnboardingView: View {
             Text("おすすめのシーンを選ぶのに使います。あとで変えられます。")
                 .font(.callout)
                 .foregroundStyle(MColor.inkSecondary)
-            choiceGrid(PracticeGoal.allCases.map(\.title), selected: model.profile.goal.title) { title in
+            choiceGrid(PracticeGoal.allCases.map { $0.title }, selected: model.profile.goal.title) { title in
                 if let goal = PracticeGoal.allCases.first(where: { $0.title == title }) {
                     model.profile.goal = goal
                 }
@@ -109,7 +109,7 @@ struct OnboardingView: View {
             Text("L&Rの点数で大丈夫です。受けていなければ「なし」を選んでください。")
                 .font(.footnote)
                 .foregroundStyle(MColor.inkSecondary)
-            choiceGrid(ToeicBand.allCases.map(\.title), selected: model.profile.toeic.title) { title in
+            choiceGrid(ToeicBand.allCases.map { $0.title }, selected: model.profile.toeic.title) { title in
                 if let band = ToeicBand.allCases.first(where: { $0.title == title }) {
                     model.profile.toeic = band
                 }
