@@ -1,6 +1,6 @@
 // STG だけ。本番の xcconfig は置かない。
 // Cloud Run の URL が決まったら、下の API_BASE_URL をその URL に変える。
 // `http:/$()/` は xcconfig が // をコメントとみなさないようにするため。
-API_BASE_URL = http:/$()/127.0.0.1:8787
+API_BASE_URL = https:/$()/mouthy-api-svueiqi6pq-an.a.run.app
 // 空ならサーバーはクライアントトークンを要求しない。STG で MOUTHY_CLIENT_TOKEN を有効にしたら、ここか Xcode Cloud の変数に同じ値を入れる。
 MOUTHY_CLIENT_TOKEN =
