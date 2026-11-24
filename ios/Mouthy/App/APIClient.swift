@@ -1,4 +1,5 @@
 import Foundation
+import MouthyLogic
 
 struct PublicConfig: Decodable {
     var voiceReady: Bool
