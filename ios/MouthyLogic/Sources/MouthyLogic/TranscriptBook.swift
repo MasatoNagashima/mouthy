@@ -40,6 +40,8 @@ public struct TranscriptBook: Equatable, Sendable {
 
     public private(set) var utterances: [Utterance] = []
 
+    public init() {}
+
     /// 届いた順ではなく、発話が始まった時刻で並べる。相づちは入れない。
     public var ordered: [Utterance] {
         utterances.sorted { lhs, rhs in

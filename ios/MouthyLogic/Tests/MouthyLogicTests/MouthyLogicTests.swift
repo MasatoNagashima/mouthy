@@ -122,6 +122,18 @@ final class MouthyLogicTests: XCTestCase {
         XCTAssertTrue(SpokenWords.containsBannedJudgement("that was a mistake"))
     }
 
+    func testCorrectionsRoundTripThroughJSON() throws {
+        let correction = ReviewCorrection(id: "c1", tag: "時制", original: "I join", better: "I joined", reasonJa: "過去形")
+        let phrase = StuckPhrase(id: "s1", phrase: "to be honest", meaningJa: "正直に言うと", reason: "6秒の間")
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        let correctionData = try encoder.encode(correction)
+        let phraseData = try encoder.encode(phrase)
+        XCTAssertEqual(try decoder.decode(ReviewCorrection.self, from: correctionData), correction)
+        XCTAssertEqual(try decoder.decode(StuckPhrase.self, from: phraseData), phrase)
+        _ = TranscriptBook()
+    }
+
     func testTenseCorrectionAndStartPoint() {
         let review = ReviewMath.build(
             levels: [.answers],
