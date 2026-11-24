@@ -41,7 +41,7 @@ struct TalkView: View {
         .mouthyScreen()
         .onAppear {
             let previous = model.sessions.first { !$0.isDiagnostic }
-            let talk = TalkSession(launch: launch, settings: model.settings, previous: previous, api: .fromBundle())
+            let talk = TalkSession(launch: launch, settings: model.settings, previous: previous, api: model.api())
             session = talk
             talk.start()
         }

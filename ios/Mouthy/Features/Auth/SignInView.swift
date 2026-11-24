@@ -19,8 +19,15 @@ struct SignInView: View {
                         .foregroundStyle(MColor.inkSecondary)
                     feature("bubble.left.and.bubble.right.fill", "AIが質問でリード", "話題を考えなくていい。答えやすい質問から順に聞きます")
                     feature("hourglass", "詰まっても大丈夫", "黙っても急かしません。3段階のヒントで背中を押します")
-                    if let message = model.signInError, !model.busy {
-                        errorCard(message)
+                    if model.accountDeletedNotice, !model.busy {
+                        Text("アカウントを削除しました")
+                            .font(.headline)
+                        Text("ご利用ありがとうございました。")
+                            .font(.footnote)
+                            .foregroundStyle(MColor.inkSecondary)
+                    }
+                    if let failure = model.signInError, !model.busy {
+                        errorCard(failure.message)
                     }
                 }
                 .padding(MSpace.l)
@@ -136,7 +143,7 @@ struct SignInView: View {
 
     private func errorCard(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(LoginCopy.failureTitle).font(.headline)
+            Text(SignInFailure.title).font(.headline)
             Text(message).font(.footnote).foregroundStyle(MColor.inkSecondary)
         }
         .padding(MSpace.l)
@@ -159,15 +166,15 @@ struct SignInView: View {
             guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
                   let tokenData = credential.identityToken,
                   let idToken = String(data: tokenData, encoding: .utf8) else {
-                model.signInError = "サインインの確認を受け取れませんでした。もう一度お試しください。"
+                model.signInError = SignInFailure(reason: .verification)
                 return
             }
-            let name = [credential.fullName?.familyName, credential.fullName?.givenName].compactMap { $0 }.joined()
             let nonce = appleNonce
-            Task { await model.signIn(provider: .apple, idToken: idToken, nonce: nonce, name: name.isEmpty ? nil : name) }
+            let fullName = credential.fullName
+            Task { await model.signInWithApple(idToken: idToken, nonce: nonce, fullName: fullName) }
         case .failure(let error):
             if let auth = error as? ASAuthorizationError, auth.code == .canceled { return }
-            model.signInError = "サインインできませんでした。もう一度お試しください。"
+            model.signInError = SignInFailure(error: error)
         }
     }
 }

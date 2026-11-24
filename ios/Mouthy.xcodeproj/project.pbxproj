@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		A10000000000000000000042 /* MouthyLogic in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000041 /* MouthyLogic */; };
 		A10000000000000000000060 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000061 /* GoogleSignIn */; };
+		A10000000000000000000063 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000065 /* FirebaseAuth */; };
+		A10000000000000000000064 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000066 /* FirebaseCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,6 +29,8 @@
 			files = (
 				A10000000000000000000042 /* MouthyLogic in Frameworks */,
 				A10000000000000000000060 /* GoogleSignIn in Frameworks */,
+				A10000000000000000000063 /* FirebaseAuth in Frameworks */,
+				A10000000000000000000064 /* FirebaseCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -73,6 +77,8 @@
 			packageProductDependencies = (
 				A10000000000000000000041 /* MouthyLogic */,
 				A10000000000000000000061 /* GoogleSignIn */,
+				A10000000000000000000065 /* FirebaseAuth */,
+				A10000000000000000000066 /* FirebaseCore */,
 			);
 			productName = "Mouthy STG";
 			productReference = A10000000000000000000004 /* Mouthy STG.app */;
@@ -106,6 +112,7 @@
 			packageReferences = (
 				A10000000000000000000040 /* XCLocalSwiftPackageReference "MouthyLogic" */,
 				A10000000000000000000062 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				A10000000000000000000067 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 			);
 			productRefGroup = A10000000000000000000003 /* Products */;
 			projectDirPath = "";
@@ -302,7 +309,15 @@
 			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 10.1.0;
+				minimumVersion = 8.0.0;
+			};
+		};
+		A10000000000000000000067 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.15.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -317,6 +332,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000062 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
 			productName = GoogleSignIn;
+		};
+		A10000000000000000000065 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000067 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		A10000000000000000000066 /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000067 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

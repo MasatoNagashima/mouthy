@@ -16,7 +16,7 @@
 - イメージは Cloud Build（`server/cloudbuild.api.yaml`）で作ります。ランナーでは作りません。
 - Cloud Run のイメージと `mouthy-commit` ラベルは `ci/stg_deploy.sh` が差し替え、Terraform は見ません（`ignore_changes`）。CPU、メモリ、環境変数は Terraform と `ci/stg_deploy.sh` の両方に書いてあるので、変えるときは両方を変えます。
 
-Shadowly との違い: 採点用の別サービス、Firestore、録音バケット、本番（prd）の plan / apply はありません。履歴は iOS の端末内に置きます。サーバーは Apple / Google の ID トークンを検証して自前のセッションを発行し、そのセッションがないと短命トークン、Q&A 判定、総合点を返しません。Firebase は使いません。
+Shadowly との違い: 採点用の別サービス、Firestore、録音バケット、本番（prd）の plan / apply はありません。履歴は iOS の端末内に置きます。サーバーは Firebase の ID トークンを検証し、それがないと短命トークン、Q&A 判定、総合点を返しません。Firebase のプロジェクト自体は Terraform に置きません（Shadowly と同じ）。
 
 ## ディレクトリ
 
@@ -34,8 +34,8 @@ infra/
 - サービスアカウント `mouthy-api`（Secret Manager の読み取り）
 - Cloud Run `mouthy-api`（公開）。起動確認は `GET /api/health`
 - Artifact Registry `mouthy`
-- Secret Manager `openai-api-key` と `mouthy-session-secret` の入れ物と読み取り権限（値は持たない）
-- `infra/google-client.json` の iOS クライアント ID（空なら Google ログインの audience は空。秘密ではない）
+- Secret Manager `openai-api-key` の入れ物と読み取り権限（値は持たない）
+- Cloud Run の `GOOGLE_CLOUD_PROJECT=mouthy-stg`（Firebase ID トークンの audience）
 - `gha-stg-plan` / `gha-stg-deploy` と Workload Identity プール（`bootstrap/stg`）
 
 IAM は追加型（`*_iam_member`）です。ここに書いていないバインディングは消しません。

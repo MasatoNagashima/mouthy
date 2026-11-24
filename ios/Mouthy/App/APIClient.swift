@@ -1,5 +1,4 @@
 import Foundation
-import MouthyLogic
 
 struct PublicConfig: Decodable {
     var voiceReady: Bool
@@ -50,21 +49,17 @@ enum APIError: LocalizedError {
     }
 }
 
-enum SessionAccess {
-    static var token: String?
-}
-
-struct IssuedSession: Decodable {
-    var token: String
-    var expiresAt: Date
-    var provider: String
-    var name: String?
+struct ServerAccount: Decodable {
+    var uid: String
+    var email: String
 }
 
 struct APIClient {
     var baseURL: URL
     var clientToken: String
     var session: URLSession = .shared
+    /// 付いているとき、有料 API は Firebase の ID トークンを Bearer で送る。401 なら 1 回だけ取り直す。
+    var tokenProvider: (@Sendable (_ forceRefresh: Bool) async throws -> String)?
 
     static func fromBundle() -> APIClient {
         let raw = Bundle.main.object(forInfoDictionaryKey: "APIBaseURL") as? String
@@ -73,16 +68,13 @@ struct APIClient {
         return APIClient(baseURL: url, clientToken: token.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    func exchange(provider: LoginMethod, idToken: String, nonce: String?, name: String?) async throws -> IssuedSession {
-        var payload: [String: Any] = ["idToken": idToken]
-        if let nonce { payload["nonce"] = nonce }
-        if let name { payload["name"] = name }
-        let body = try JSONSerialization.data(withJSONObject: payload)
-        let path = provider == .apple ? "/api/auth/apple" : "/api/auth/google"
-        let data = try await send(path: path, method: "POST", body: body, authorize: false)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(IssuedSession.self, from: data)
+    func me() async throws -> ServerAccount {
+        let data = try await send(path: "/api/me", method: "GET", body: nil, authorize: true)
+        return try JSONDecoder().decode(ServerAccount.self, from: data)
+    }
+
+    func deleteMe() async throws {
+        _ = try await send(path: "/api/me", method: "DELETE", body: nil, authorize: true)
     }
 
     func config() async throws -> PublicConfig {
@@ -131,13 +123,42 @@ struct APIClient {
         request.httpMethod = method
         request.httpBody = body
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        if authorize, let token = SessionAccess.token, !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        } else if authorize, !clientToken.isEmpty {
+        if authorize, let tokenProvider {
+            let first = try await perform(request, idToken: try await idToken(from: tokenProvider, forceRefresh: false))
+            if statusCode(of: first.response) == 401 {
+                let retry = try await perform(request, idToken: try await idToken(from: tokenProvider, forceRefresh: true))
+                return try validated(retry.response, data: retry.data)
+            }
+            return try validated(first.response, data: first.data)
+        }
+        if authorize, !clientToken.isEmpty {
             request.setValue(clientToken, forHTTPHeaderField: "X-Mouthy-Client")
         }
         let (data, response) = try await session.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        return try validated(response, data: data)
+    }
+
+    private func perform(_ request: URLRequest, idToken: String) async throws -> (data: Data, response: URLResponse) {
+        var authorized = request
+        authorized.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: authorized)
+        return (data, response)
+    }
+
+    private func idToken(from provider: @Sendable (Bool) async throws -> String, forceRefresh: Bool) async throws -> String {
+        do {
+            return try await provider(forceRefresh)
+        } catch let error as AccountAuthError where error == .missingAccount {
+            throw APIError.badStatus(401, "サインインが必要です。")
+        }
+    }
+
+    private func statusCode(of response: URLResponse) -> Int {
+        (response as? HTTPURLResponse)?.statusCode ?? 0
+    }
+
+    private func validated(_ response: URLResponse, data: Data) throws -> Data {
+        let status = statusCode(of: response)
         guard (200..<300).contains(status) else {
             let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String
             throw APIError.badStatus(status, message)

@@ -21,7 +21,10 @@ struct RootView: View {
     var body: some View {
         @Bindable var model = model
         Group {
-            if !model.isSignedIn {
+            if model.restoringSession {
+                ProgressView(LoginCopy.signingIn)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !model.isSignedIn {
                 SignInView()
             } else if model.profile.onboardingComplete {
                 MainTabView()
@@ -33,6 +36,7 @@ struct RootView: View {
         .onOpenURL { url in
             _ = AccountAuth.handle(url: url)
         }
+        .task { await model.restoreIfNeeded() }
         .fullScreenCover(item: $model.talk, onDismiss: {
             if let pending = model.pendingReview {
                 model.finishedSession = pending
