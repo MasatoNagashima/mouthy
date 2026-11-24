@@ -100,16 +100,17 @@ final class TalkSession {
     private func run() async {
         phase = .connecting
         let config = try? await api.config()
-        if config?.voiceReady == true, !launch.diagnostic {
+        if config?.voiceReady == true {
+            // 診断も含め、本物の音声でつなぐ。台本（学習者の発話を自動で入れるデモ）には切り替えない。
             usingScript = false
             notice = nil
             await runLive()
         } else {
-            usingScript = true
-            notice = config?.voiceReady == true
-                ? nil
-                : "音声サーバーに繋がっていません。台本で流れを確認しています。"
-            await runScript()
+            usingScript = false
+            notice = config == nil
+                ? "サーバーに接続できませんでした。通信を確認して、もう一度お試しください。"
+                : "音声サーバーの準備ができていません。しばらくしてからお試しください。"
+            phase = .ended
         }
     }
 
@@ -176,36 +177,72 @@ final class TalkSession {
     }
 
     private func runLive() async {
+        let audio = RealtimeAudio()
+        var socket: RealtimeSocket?
+        var sender: Task<Void, Never>?
+        var ticker: Task<Void, Never>?
+        var chunks: AsyncStream<Data>.Continuation?
+        defer {
+            ticker?.cancel()
+            chunks?.finish()
+            sender?.cancel()
+            audio.stop()
+        }
         do {
             let minted = try await api.mint(scene: launch.scene, settings: settings, phrases: [])
-            let socket = RealtimeSocket(token: minted.token, model: minted.model)
-            try await socket.connect(instructions: SceneLibrary.instructionBlock(for: launch.scene, checkpointIndex: 0))
+            let live = RealtimeSocket(token: minted.token, model: minted.model)
+            socket = live
+            try await live.connect()
             phase = .aiSpeaking
-            let audio = RealtimeAudio()
+            // マイクの音は1本の列に積んで、届いた順に送る（Task をばらばらに作ると順番が入れ替わる）。
+            let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
+            chunks = continuation
+            sender = Task { [weak self] in
+                for await chunk in stream {
+                    if self?.phase == .paused { continue }
+                    await live.appendAudio(chunk)
+                }
+            }
             try audio.start(onLevel: { [weak self] level in
                 Task { @MainActor in self?.audioLevel = level }
             }, onPCM: { data in
-                Task { await socket.appendAudio(data) }
+                continuation.yield(data)
             })
-            defer { audio.stop() }
             let deadline = Date().addingTimeInterval(TimeInterval(remainingSec))
-            while !ended, !Task.isCancelled, Date() < deadline {
+            ticker = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard let self else { return }
+                    self.remainingSec = max(0, Int(deadline.timeIntervalSinceNow.rounded(.up)))
+                    if self.remainingSec == 0 || self.ended {
+                        await live.close()
+                        return
+                    }
+                }
+            }
+            while !ended, !Task.isCancelled {
                 if phase == .paused {
                     try? await Task.sleep(nanoseconds: 200_000_000)
                     continue
                 }
-                if let event = await socket.nextEvent() {
+                guard let event = await live.nextEvent() else { break }
+                switch event {
+                case .aiAudio(let pcm):
+                    audio.play(pcm)
+                    if phase != .listening { phase = .aiSpeaking }
+                case .learnerStarted:
+                    audio.interrupt()
+                    apply(event)
+                default:
                     apply(event)
                 }
-                if remainingSec > 0, Int(deadline.timeIntervalSinceNow) < remainingSec {
-                    remainingSec = max(0, Int(deadline.timeIntervalSinceNow))
-                }
             }
-            await socket.close()
+            await live.close()
+            if !ended { phase = .ended }
         } catch {
-            notice = "音声に繋げませんでした。台本で流れを確認しています。"
-            usingScript = true
-            await runScript()
+            await socket?.close()
+            notice = "音声に繋げませんでした。\(error.localizedDescription)"
+            phase = .ended
         }
     }
 
@@ -238,8 +275,12 @@ final class TalkSession {
             book.markLearnerPending(id: id, atMs: at)
         case .level(let value):
             audioLevel = value
+        case .aiAudio:
+            phase = .aiSpeaking
+        case .failure(let message):
+            notice = message
         case .disconnected:
-            phase = .reconnecting
+            if !ended, remainingSec > 0 { notice = "音声の接続が切れました。もう一度はじめてください。" }
         }
     }
 
