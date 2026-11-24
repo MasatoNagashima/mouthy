@@ -3,18 +3,22 @@ import Foundation
 
 enum RealtimeEvent {
     case aiDelta(id: String, text: String, at: Int)
+    case aiAudio(Data)
     case aiDone(id: String)
     case learnerStarted(id: String, at: Int)
     case learnerPartial(id: String, text: String)
     case learnerFinal(id: String, text: String, at: Int)
     case learnerStopped(id: String, at: Int)
     case level(Double)
+    case failure(String)
     case disconnected
 }
 
 /// OpenAI Realtime の WebSocket。短命トークンだけを使い、APIキーは持たない。
 /// 音声の中身はこのアプリのサーバーを通らない。
-final class RealtimeSocket {
+/// セッションの設定（指示文・声・文字起こし・ノイズ除去・ターン検出）はサーバーが
+/// 一時トークン発行時に入れているので、ここでは上書きしない。
+actor RealtimeSocket {
     private let token: String
     private let model: String
     private let started = Date()
@@ -28,39 +32,18 @@ final class RealtimeSocket {
         self.model = model
     }
 
-    func connect(instructions: String) async throws {
+    func connect() async throws {
         var components = URLComponents(string: "wss://api.openai.com/v1/realtime")!
         components.queryItems = [URLQueryItem(name: "model", value: model)]
         var request = URLRequest(url: components.url!)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let session = URLSession(configuration: .default)
         let task = session.webSocketTask(with: request)
+        task.maximumMessageSize = 16 * 1024 * 1024
         self.task = task
         task.resume()
-        let update: [String: Any] = [
-            "type": "session.update",
-            "session": [
-                "type": "realtime",
-                "instructions": instructions,
-                "audio": [
-                    "input": [
-                        "format": ["type": "audio/pcm", "rate": 24000],
-                        "turn_detection": [
-                            "type": "semantic_vad",
-                            "eagerness": "low",
-                            "create_response": true,
-                            "interrupt_response": true,
-                        ],
-                    ],
-                    "output": [
-                        "format": ["type": "audio/pcm", "rate": 24000],
-                    ],
-                ],
-            ],
-        ]
-        try await send(update)
-        try await send(["type": "response.create"])
         Task { [weak self] in await self?.receiveLoop() }
+        try await send(["type": "response.create"])
     }
 
     func appendAudio(_ pcm: Data) async {
@@ -134,8 +117,15 @@ final class RealtimeSocket {
             let id = (json["response_id"] as? String) ?? (json["item_id"] as? String) ?? "ai"
             let delta = (json["delta"] as? String) ?? ""
             return delta.isEmpty ? nil : .aiDelta(id: id, text: delta, at: clock())
-        case "response.output_audio_transcript.done", "response.audio_transcript.done", "response.done":
+        case "response.output_audio.delta", "response.audio.delta":
+            guard let delta = json["delta"] as? String, let pcm = Data(base64Encoded: delta), !pcm.isEmpty else { return nil }
+            return .aiAudio(pcm)
+        case "response.output_audio_transcript.done", "response.audio_transcript.done":
             let id = (json["response_id"] as? String) ?? "ai"
+            return .aiDone(id: id)
+        case "response.done":
+            let response = json["response"] as? [String: Any]
+            let id = (response?["id"] as? String) ?? "ai"
             return .aiDone(id: id)
         case "input_audio_buffer.speech_started":
             let id = (json["item_id"] as? String) ?? UUID().uuidString
@@ -150,25 +140,37 @@ final class RealtimeSocket {
             let id = (json["item_id"] as? String) ?? "learner"
             return .learnerFinal(id: id, text: (json["transcript"] as? String) ?? "", at: clock())
         case "error":
-            return .disconnected
+            let detail = json["error"] as? [String: Any]
+            let code = (detail?["code"] as? String) ?? ""
+            // 発話がないまま確定しようとしたなど、会話を止めなくてよいエラーは無視する。
+            if code == "input_audio_buffer_commit_empty" || code == "response_cancel_not_active" { return nil }
+            return .failure((detail?["message"] as? String) ?? "音声サーバーでエラーが起きました。")
         default:
             return nil
         }
     }
 }
 
+/// マイク入力（24kHz PCM16 に変換して送る）と、AI の音声（24kHz PCM16）の再生。
+/// 入力ノードの Voice Processing を有効にして、スピーカーから出た AI の声を
+/// マイクが拾わないようにする（エコーキャンセル）。
 final class RealtimeAudio {
     private let engine = AVAudioEngine()
-    private var player = AVAudioPlayerNode()
+    private let player = AVAudioPlayerNode()
     private var converter: AVAudioConverter?
+    /// AVAudioPlayerNode は Float32 の非インターリーブしか再生できないので、受け取った PCM16 を変換して流す。
+    private let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
 
     func start(onLevel: @escaping (Double) -> Void, onPCM: @escaping (Data) -> Void) throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setActive(true)
         let input = engine.inputNode
+        try input.setVoiceProcessingEnabled(true)
         let format = input.outputFormat(forBus: 0)
-        guard let target = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24_000, channels: 1, interleaved: true) else { return }
+        guard format.sampleRate > 0, format.channelCount > 0,
+              let target = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24_000, channels: 1, interleaved: true)
+        else { throw RealtimeAudioError.microphoneUnavailable }
         converter = AVAudioConverter(from: format, to: target)
         input.installTap(onBus: 0, bufferSize: 2400, format: format) { [weak self] buffer, _ in
             guard let self, let converter = self.converter else { return }
@@ -186,7 +188,7 @@ final class RealtimeAudio {
                 status.pointee = .haveData
                 return buffer
             }
-            if let channel = converted.int16ChannelData {
+            if let channel = converted.int16ChannelData, converted.frameLength > 0 {
                 let count = Int(converted.frameLength)
                 let data = Data(bytes: channel[0], count: count * MemoryLayout<Int16>.size)
                 onPCM(data)
@@ -199,26 +201,46 @@ final class RealtimeAudio {
             }
         }
         engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: target)
+        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        engine.prepare()
         try engine.start()
         player.play()
     }
 
     func stop() {
+        player.stop()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
+    /// AI の音声（24kHz・モノラル・PCM16 リトルエンディアン）を再生キューに積む。
     func play(_ pcm: Data) {
-        guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24_000, channels: 1, interleaved: true),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(pcm.count / 2))
+        let frames = pcm.count / MemoryLayout<Int16>.size
+        guard frames > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: playbackFormat, frameCapacity: AVAudioFrameCount(frames)),
+              let out = buffer.floatChannelData
         else { return }
-        buffer.frameLength = buffer.frameCapacity
+        buffer.frameLength = AVAudioFrameCount(frames)
         pcm.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress, let channel = buffer.int16ChannelData else { return }
-            memcpy(channel[0], base, pcm.count)
+            for index in 0..<frames {
+                let sample = Int16(littleEndian: raw.loadUnaligned(fromByteOffset: index * 2, as: Int16.self))
+                out[0][index] = Float(sample) / 32_768
+            }
         }
+        if !player.isPlaying { player.play() }
         player.scheduleBuffer(buffer)
     }
+
+    /// 学習者が話しはじめたら、残っている AI の音声を捨てる（割り込み）。
+    func interrupt() {
+        player.stop()
+        player.play()
+    }
+}
+
+enum RealtimeAudioError: LocalizedError {
+    case microphoneUnavailable
+
+    var errorDescription: String? { "マイクを使えませんでした。設定でマイクの許可を確認してください。" }
 }
