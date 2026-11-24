@@ -17,6 +17,12 @@ final class AppModel {
     var dayKey: String?
     var toast: String?
     var loadFailed = false
+    var isSignedIn = false
+    var sessionToken: String?
+    var lastLoginMethod: LoginMethod?
+    var busy = false
+    var signInError: String?
+    let lastLogin = LastLoginStore()
 
     private let fileURL: URL
     private var ready = false
@@ -50,6 +56,8 @@ final class AppModel {
             sessions = []
         }
         ready = true
+        lastLoginMethod = lastLogin.method
+        restoreSession()
     }
 
     func reload() {
@@ -87,6 +95,9 @@ final class AppModel {
     }
 
     func wipe() {
+        lastLogin.clear()
+        lastLoginMethod = nil
+        signOut()
         profile = .empty
         settings = .standard
         sessions = []

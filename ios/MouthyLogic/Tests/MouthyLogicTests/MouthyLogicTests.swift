@@ -122,6 +122,23 @@ final class MouthyLogicTests: XCTestCase {
         XCTAssertTrue(SpokenWords.containsBannedJudgement("that was a mistake"))
     }
 
+    func testLastLoginPutsThePreviousMethodFirst() {
+        let suite = "mouthy.login.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let store = LastLoginStore(defaults: defaults)
+        XCTAssertNil(store.method)
+        XCTAssertEqual(LoginButtonOrder.order(last: nil), [.apple, .google])
+        store.save(.google)
+        XCTAssertEqual(store.method, .google)
+        XCTAssertEqual(LoginButtonOrder.order(last: store.method), [.google, .apple])
+        store.clear()
+        XCTAssertNil(store.method)
+        XCTAssertEqual(LoginCopy.googleButton, "Google で続ける")
+        XCTAssertEqual(LoginCopy.lastLoginLabel, "前回のログイン")
+        XCTAssertEqual(LoginCopy.failureTitle, "サインインできませんでした")
+        defaults.removePersistentDomain(forName: suite)
+    }
+
     func testCorrectionsRoundTripThroughJSON() throws {
         let correction = ReviewCorrection(id: "c1", tag: "時制", original: "I join", better: "I joined", reasonJa: "過去形")
         let phrase = StuckPhrase(id: "s1", phrase: "to be honest", meaningJa: "正直に言うと", reason: "6秒の間")

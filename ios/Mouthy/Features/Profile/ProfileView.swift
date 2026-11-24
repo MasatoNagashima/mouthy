@@ -55,6 +55,7 @@ struct ProfileView: View {
                     ShareLink(item: exportFile) { Text("履歴を書き出す（JSON）") }
                 }
                 Section {
+                    Button("サインアウト") { model.signOut() }
                     Button("アカウントを削除", role: .destructive) { confirmDelete = true }
                 } footer: {
                     Text("この端末のプロフィール、同意の記録、会話の添削結果を消します。音声の録音は残していません。")

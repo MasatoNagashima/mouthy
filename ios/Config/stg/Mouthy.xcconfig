@@ -2,5 +2,9 @@
 // Cloud Run の URL が決まったら、下の API_BASE_URL をその URL に変える。
 // `http:/$()/` は xcconfig が // をコメントとみなさないようにするため。
 API_BASE_URL = https:/$()/mouthy-api-svueiqi6pq-an.a.run.app
-// 空ならサーバーはクライアントトークンを要求しない。STG で MOUTHY_CLIENT_TOKEN を有効にしたら、ここか Xcode Cloud の変数に同じ値を入れる。
+// 空ならサーバーはクライアントトークンを要求しない。STG の有料 API はセッショントークンが代わりに必須。
 MOUTHY_CLIENT_TOKEN =
+// Xcode Cloud の環境変数を Info.plist に渡す。ここには値を書かない。
+// MOUTHY_GOOGLE_CLIENT_ID と MOUTHY_GOOGLE_REVERSED_CLIENT_ID が空なら、未置換の $(...) のままになり、URL scheme は埋め込まない。
+GID_CLIENT_ID = $(MOUTHY_GOOGLE_CLIENT_ID)
+GOOGLE_REVERSED_CLIENT_ID = $(MOUTHY_GOOGLE_REVERSED_CLIENT_ID)

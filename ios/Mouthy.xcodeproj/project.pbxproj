@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A10000000000000000000042 /* MouthyLogic in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000041 /* MouthyLogic */; };
+		A10000000000000000000060 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000061 /* GoogleSignIn */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,6 +26,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000042 /* MouthyLogic in Frameworks */,
+				A10000000000000000000060 /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -58,6 +60,7 @@
 				A10000000000000000000008 /* Sources */,
 				A10000000000000000000002 /* Frameworks */,
 				A10000000000000000000009 /* Resources */,
+				A10000000000000000000070 /* Embed Google URL scheme */,
 			);
 			buildRules = (
 			);
@@ -69,6 +72,7 @@
 			name = "Mouthy STG";
 			packageProductDependencies = (
 				A10000000000000000000041 /* MouthyLogic */,
+				A10000000000000000000061 /* GoogleSignIn */,
 			);
 			productName = "Mouthy STG";
 			productReference = A10000000000000000000004 /* Mouthy STG.app */;
@@ -101,6 +105,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A10000000000000000000040 /* XCLocalSwiftPackageReference "MouthyLogic" */,
+				A10000000000000000000062 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 			productRefGroup = A10000000000000000000003 /* Products */;
 			projectDirPath = "";
@@ -120,6 +125,24 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A10000000000000000000070 /* Embed Google URL scheme */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Google URL scheme";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/ci_scripts/embed_google_url_scheme.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A10000000000000000000008 /* Sources */ = {
@@ -273,11 +296,27 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		A10000000000000000000062 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 10.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		A10000000000000000000041 /* MouthyLogic */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000040 /* XCLocalSwiftPackageReference "MouthyLogic" */;
 			productName = MouthyLogic;
+		};
+		A10000000000000000000061 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000062 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

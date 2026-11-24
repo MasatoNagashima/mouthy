@@ -21,13 +21,18 @@ struct RootView: View {
     var body: some View {
         @Bindable var model = model
         Group {
-            if model.profile.onboardingComplete {
+            if !model.isSignedIn {
+                SignInView()
+            } else if model.profile.onboardingComplete {
                 MainTabView()
             } else {
                 OnboardingView()
             }
         }
         .mouthyScreen()
+        .onOpenURL { url in
+            _ = AccountAuth.handle(url: url)
+        }
         .fullScreenCover(item: $model.talk, onDismiss: {
             if let pending = model.pendingReview {
                 model.finishedSession = pending

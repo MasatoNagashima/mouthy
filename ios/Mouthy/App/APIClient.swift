@@ -36,9 +36,29 @@ struct ServerReview: Decodable {
     var speakingWpm: Double?
 }
 
-enum APIError: Error {
-    case badStatus(Int)
+enum APIError: LocalizedError {
+    case badStatus(Int, String?)
     case notConfigured
+
+    var errorDescription: String? {
+        switch self {
+        case .badStatus(_, let message):
+            return message ?? "サーバーに接続できませんでした。もう一度お試しください。"
+        case .notConfigured:
+            return "サーバーのURLが設定されていません。"
+        }
+    }
+}
+
+enum SessionAccess {
+    static var token: String?
+}
+
+struct IssuedSession: Decodable {
+    var token: String
+    var expiresAt: Date
+    var provider: String
+    var name: String?
 }
 
 struct APIClient {
@@ -51,6 +71,18 @@ struct APIClient {
         let token = (Bundle.main.object(forInfoDictionaryKey: "MouthyClientToken") as? String) ?? ""
         let url = URL(string: raw ?? "") ?? URL(string: "http://127.0.0.1:8787")!
         return APIClient(baseURL: url, clientToken: token.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func exchange(provider: LoginMethod, idToken: String, nonce: String?, name: String?) async throws -> IssuedSession {
+        var payload: [String: Any] = ["idToken": idToken]
+        if let nonce { payload["nonce"] = nonce }
+        if let name { payload["name"] = name }
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let path = provider == .apple ? "/api/auth/apple" : "/api/auth/google"
+        let data = try await send(path: path, method: "POST", body: body, authorize: false)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(IssuedSession.self, from: data)
     }
 
     func config() async throws -> PublicConfig {
@@ -99,12 +131,17 @@ struct APIClient {
         request.httpMethod = method
         request.httpBody = body
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        if authorize, !clientToken.isEmpty {
+        if authorize, let token = SessionAccess.token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        } else if authorize, !clientToken.isEmpty {
             request.setValue(clientToken, forHTTPHeaderField: "X-Mouthy-Client")
         }
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else { throw APIError.badStatus(status) }
+        guard (200..<300).contains(status) else {
+            let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String
+            throw APIError.badStatus(status, message)
+        }
         return data
     }
 }

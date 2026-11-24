@@ -39,9 +39,25 @@ printf '%s' 'sk-...' | gcloud secrets versions add openai-api-key \
   --project=mouthy-stg --data-file=-
 ```
 
-- [ ] `MOUTHY_CLIENT_TOKEN` はいま無効（空）です。STG の `/api/realtime/session` と `/api/feedback/review` は、URL を知っていれば呼べます。短命トークンの発行で OpenAI の利用料がかかるので、公開前に次を足してください。サーバーは環境変数 `MOUTHY_CLIENT_TOKEN` が入っているときだけ、ヘッダ `X-Mouthy-Client` を要求します。
-  - Secret Manager に `mouthy-client-token` を作り、Cloud Run の環境変数 `MOUTHY_CLIENT_TOKEN` に `latest` をマウントする（`infra/envs/stg/main.tf` の `env` と `ci/stg_deploy.sh` の `--set-secrets` の両方）。
-  - 同じ値を Xcode Cloud の環境変数 `MOUTHY_CLIENT_TOKEN` に入れる。`ios/Config/stg/Mouthy.xcconfig` が Info.plist の `MouthyClientToken` に渡す。アプリのソースには書かない。
+- [ ] セッション署名の秘密 `mouthy-session-secret` の入れ物は Terraform が作ります。**バージョンは自動では入りません。** 次の `stg-deploy` は、バージョンが無いと Cloud Run の新しいリビジョンを起動できず失敗します。その間、いま動いているリビジョン（認証なし）が残ります。マージの前か直後に、`mouthy-stg` にログインした状態で次を実行してください。
+
+```bash
+openssl rand -base64 32 | gcloud secrets versions add mouthy-session-secret \
+  --project=mouthy-stg --data-file=-
+```
+
+入れ物がまだ無い（最初の apply の前）なら、先に入れ物を作ります。
+
+```bash
+gcloud secrets create mouthy-session-secret \
+  --project=mouthy-stg \
+  --replication-policy=user-managed \
+  --locations=asia-northeast1
+```
+
+この秘密が入ると、`/api/realtime/session`、`/api/feedback/judge`、`/api/feedback/review`、`/api/providers/gemini/token` は `Authorization: Bearer` のセッショントークンが必要です。`MOUTHY_CLIENT_TOKEN` は見ません。秘密が空の本番（`NODE_ENV=production`）では、これらの経路は 503 で、URL を知っていても OpenAI のトークンは発行しません。`GET /api/health` は 200 のままです。
+
+- [ ] `MOUTHY_CLIENT_TOKEN` は STG では使いません。Xcode Cloud にも Secret Manager にも足さないでください。手元の開発で `MOUTHY_SESSION_SECRET` が空、かつ `NODE_ENV` が `production` でないときだけ、従来の `X-Mouthy-Client` が残ります。
 
 `GEMINI_API_KEY` は STG では使いません。ローカルの `.env` だけです。
 
@@ -66,11 +82,20 @@ Variables（Settings → Secrets and variables → Actions → **Variables**。�
 Xcode プロジェクトのターゲットとスキームは **Mouthy STG** の 1 つだけです。本番ターゲットはありません。表示名（`PRODUCT_NAME` と `CFBundleDisplayName`）も **Mouthy STG** で、ビルド成果物は `Mouthy STG.app` です。Swift モジュール名（`PRODUCT_MODULE_NAME`）は `Mouthy` のままです。バンドル ID は `com.mouthy.stg`。`DEVELOPMENT_TEAM` は Shadowly の公開プロジェクトと同じ `P975GG75YV` を仮に入れてあります。
 
 - [ ] [developer.apple.com](https://developer.apple.com) でチーム ID が `P975GG75YV` でなければ、`ios/Mouthy.xcodeproj/project.pbxproj` の `DEVELOPMENT_TEAM` を差し替える。
-- [ ] Identifiers に App ID **`com.mouthy.stg`** を作る。Capability は **Sign in with Apple**。Push 通知は使っていない。
+- [ ] Identifiers に App ID **`com.mouthy.stg`** を作る。Capability は **Sign in with Apple**（Primary App ID はこの App ID 自体。ネイティブの Sign in with Apple に Services ID は要りません）。Push 通知は使っていない。
+- [ ] Xcode のターゲット「Mouthy STG」の Signing & Capabilities に Sign in with Apple が出ていること（`ios/Mouthy.entitlements` に入っています）。App ID 側で Capability を有効にしたあと、Xcode Cloud の署名を一度通してください。
 - [ ] 署名は Automatic（Xcode / Xcode Cloud が Development と Distribution の証明書とプロビジョニングプロファイルを作る）。手元に書き出した `.p12` や `.mobileprovision` はリポジトリに置かない。
 - [ ] App Store Connect にアプリを作る。バンドル ID は `com.mouthy.stg`。アプリ名は **Mouthy STG**。SKU は任意（例: `mouthy-stg`）。
 - [ ] Xcode Cloud をそのアプリで有効にし、リポジトリ `MasatoNagashima/mouthy` を接続する。プロダクト名は **Mouthy STG**（ターゲット「Mouthy STG」に 1 つ）。
-- [ ] ワークフロー名は **Deploy Mouthy STG**。スキーム `Mouthy STG`。開始条件は `main` の iOS 変更。アクションは Archive。配布先は TestFlight の内部テスト。環境変数 `API_BASE_URL` が必要になったら、xcconfig を変える（次項）。`ci_post_clone.sh` が `ios/MouthyLogic` の `swift test` を流す。
+- [ ] ワークフロー名は **Deploy Mouthy STG**。スキーム `Mouthy STG`。開始条件は `main` の iOS 変更。アクションは Archive。配布先は TestFlight の内部テスト。`ci_post_clone.sh` が `ios/MouthyLogic` の `swift test` を流す。
+- [ ] そのワークフローの環境変数（Xcode Cloud → ワークフロー → Environment）に、値をリポジトリへ書かずに次の 2 つを入れる。名前はこのとおり。
+
+| 名前 | 値 |
+| --- | --- |
+| `MOUTHY_GOOGLE_CLIENT_ID` | Google Cloud Console で作った iOS クライアント ID（`....apps.googleusercontent.com`） |
+| `MOUTHY_GOOGLE_REVERSED_CLIENT_ID` | その ID の逆引き。`123-abc.apps.googleusercontent.com` なら `com.googleusercontent.apps.123-abc` |
+
+`ios/Config/stg/Mouthy.xcconfig` がこの 2 つを `GID_CLIENT_ID` と `GOOGLE_REVERSED_CLIENT_ID` に渡し、Info.plist の `GIDClientID` / `GoogleReversedClientID` になります。ビルドフェーズ `ios/ci_scripts/embed_google_url_scheme.sh` が逆引き ID を URL scheme に書きます。空のあいだは URL scheme を埋め込まず、Google ボタンは「いまは Google でサインインできません」と出します。Apple はこの変数なしで動きます。
 - [ ] 内部テスターの Apple ID を TestFlight に追加する。
 - [ ] **App Store Connect API キー**（Issuer ID、Key ID、`.p8`）は、このリポジトリの GitHub Actions も Xcode Cloud も使いません。Xcode Cloud は Apple ID の接続でアップロードします。あとから Fastlane などで外から上げるときにだけ、GitHub Secrets の `APPSTORE_API_KEY_ID`、`APPSTORE_API_ISSUER_ID`、`APPSTORE_API_PRIVATE_KEY` に入れてください。`.p8` はコミットしない。
 
@@ -81,7 +106,19 @@ Cloud Run の URL が `stg-deploy` のログ（または `terraform output api_u
 
 マイクの使用目的文は「AIと英語で会話するために使います。録音は保存しません。」です。暗号化は非免除ではない（`ITSAppUsesNonExemptEncryption = false`）。輸出コンプライアンスの質問では、標準の HTTPS のみ、と答えられます。プライバシーポリシーの公開 URL はまだ無く、アプリ内の文面は下書きです。審査に出す前に URL を用意してください。
 
-Sign in with Apple の identity token は、まだサーバーで検証していません。ユーザー ID と名前は端末内にだけ残します。アカウント削除も端末内の記録を消すだけです。
+サインインは Apple または Google が必須です。タブ（ホーム、シーン、記録、プロフィール）はサインインのあとだけ開きます。セッションはアプリが発行する JWT で、キーチェーン（`com.mouthy.stg`）に 30 日残します。前回の方法は「前回のログイン」と出て、サインアウトでは消えず、アカウント削除で消えます。
+
+## 4b. Google ログイン（`mouthy-stg` の iOS クライアント）
+
+秘密ではありません。クライアント ID は Xcode Cloud の変数と、サーバー用に `infra/google-client.json` の `iosClientId` へ入れます。JSON を空のままにすると Google のサインインは 503 です。
+
+- [ ] [認証情報](https://console.cloud.google.com/apis/credentials?project=mouthy-stg) を開く（プロジェクトは **mouthy-stg**）。
+- [ ] 「認証情報を作成」→「OAuth クライアント ID」。同意画面が未作成なら先に作ります。User Type は External、アプリ名は Mouthy STG、サポートメールは本人のアドレス。スコープは追加しない（openid / email / profile は Google ログインの既定）。
+- [ ] アプリケーションの種類は **iOS**。名前は `Mouthy STG`。バンドル ID は **`com.mouthy.stg`**。App Store ID と Team ID は空でよい（Team ID を入れるなら `P975GG75YV`）。
+- [ ] 作成後のクライアント ID を、上の Xcode Cloud 変数 `MOUTHY_GOOGLE_CLIENT_ID` と `infra/google-client.json` の `iosClientId` に同じ文字列で入れる。逆引き ID はコンソールの「iOS URL スキーム」に出ます。それを `MOUTHY_GOOGLE_REVERSED_CLIENT_ID` に入れる。
+- [ ] クライアントシークレットは iOS クライアントには出ません。作らないでください。
+
+Apple の ID トークンは `https://appleid.apple.com/auth/keys` で検証し、audience は `com.mouthy.stg` です。Google は `https://www.googleapis.com/oauth2/v3/certs` で、audience は iOS クライアント ID です。
 
 ## 5. 動作確認
 
@@ -93,4 +130,5 @@ Sign in with Apple の identity token は、まだサーバーで検証してい
 
 - Xcode による iOS アプリのビルド、署名、シミュレータ起動、マイクを使った実音声。
 - OpenAI の短命トークンでの WebSocket 接続（鍵が無いため）。
-- `terraform apply` と Cloud Run への実際のデプロイ（`mouthy-stg` がまだ無いため）。`terraform validate` と `terraform fmt` は確認済み。
+- `terraform apply` と Cloud Run へのこの変更のデプロイ。`mouthy-session-secret` のバージョンが無いと、新しいリビジョンは起動せず `stg-deploy` が失敗します。失敗しているあいだは、認証のないいまのリビジョンが残ります。
+- Xcode Cloud での署名、Google の URL scheme、Apple / Google の実ログイン。
