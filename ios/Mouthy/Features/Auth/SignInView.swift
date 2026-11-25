@@ -139,7 +139,7 @@ struct SignInView: View {
         link[AttributeScopes.SwiftUIAttributes.UnderlineStyleAttribute.self] = .single
         var text = AttributedString("続けると、")
         text += link
-        text += AttributedString("と、音声を会話中だけ OpenAI に送り録音を保存しないことに\n同意したものとみなされます")
+        text += AttributedString("に同意したものとみなされます")
         return text
     }
 
