@@ -40,6 +40,7 @@ final class TalkSession {
     private let previous: PracticeSession?
     private let api: APIClient
     private var player: Task<Void, Never>?
+    private var live: RealtimeRTC?
     private var ended = false
     private let started = Date()
 
@@ -82,9 +83,11 @@ final class TalkSession {
     func togglePause() {
         if phase == .paused {
             phase = .waiting
+            live?.setMicEnabled(true)
         } else if phase == .aiSpeaking || phase == .listening || phase == .waiting {
             phase = .paused
             hint = nil
+            live?.setMicEnabled(false)
         }
     }
 
@@ -95,6 +98,7 @@ final class TalkSession {
 
     func finish() async -> PracticeSession {
         ended = true
+        live?.close()
         player?.cancel()
         phase = .ended
         return await makeSession()
@@ -180,19 +184,14 @@ final class TalkSession {
     }
 
     private func runLive() async {
-        let audio = RealtimeAudio()
-        var socket: RealtimeSocket?
-        var sender: Task<Void, Never>?
         var ticker: Task<Void, Never>?
-        var chunks: AsyncStream<Data>.Continuation?
         defer {
             ticker?.cancel()
-            chunks?.finish()
-            sender?.cancel()
-            audio.stop()
+            live?.close()
+            live = nil
         }
         do {
-            // マイクの許可を先に確かめる。許可がないとマイクは無音になり、話しても認識されない。
+            // マイクの許可を先に確かめる。許可がないと声が届かない。
             var micAllowed = AVAudioApplication.shared.recordPermission == .granted
             if AVAudioApplication.shared.recordPermission == .undetermined {
                 micAllowed = await AVAudioApplication.requestRecordPermission()
@@ -200,40 +199,23 @@ final class TalkSession {
             if !micAllowed {
                 notice = "マイクがオフになっています。iPhoneの「設定」>「Mouthy STG」でマイクをオンにしてください。"
             }
+            guard !ended, !Task.isCancelled else { return }
             let minted = try await api.mint(scene: launch.scene, settings: settings, phrases: [])
-            let live = RealtimeSocket(token: minted.token, model: minted.model)
-            socket = live
-            // マイクの音は1本の列に積んで、届いた順に送る（Task をばらばらに作ると順番が入れ替わる）。
-            let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
-            chunks = continuation
-            // 先に音声を用意してから接続する（AI の最初の声を取りこぼさない）。
-            do {
-                try audio.start(onLevel: { [weak self] level in
-                    Task { @MainActor in self?.audioLevel = level }
-                }, onPCM: { data in
-                    continuation.yield(data)
-                })
-            } catch {
-                throw TalkAudioStartError(detail: error.localizedDescription)
-            }
-            audioDebug = audio.healthCheck()
-            try await live.connect()
+            guard !ended, !Task.isCancelled else { return }
+            let rtc = RealtimeRTC(token: minted.token)
+            live = rtc
+            try await rtc.connect()
+            audioDebug = rtc.status().line
             phase = .aiSpeaking
-            sender = Task { [weak self] in
-                for await chunk in stream {
-                    if self?.phase == .paused { continue }
-                    await live.appendAudio(chunk)
-                }
-            }
             let deadline = Date().addingTimeInterval(TimeInterval(remainingSec))
             ticker = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard let self else { return }
-                    self.audioDebug = audio.healthCheck()
+                    self.audioDebug = rtc.status().line
                     self.remainingSec = max(0, Int(deadline.timeIntervalSinceNow.rounded(.up)))
                     if self.remainingSec == 0 || self.ended {
-                        await live.close()
+                        rtc.close()
                         return
                     }
                 }
@@ -243,22 +225,14 @@ final class TalkSession {
                     try? await Task.sleep(nanoseconds: 200_000_000)
                     continue
                 }
-                guard let event = await live.nextEvent() else { break }
-                switch event {
-                case .aiAudio(let pcm):
-                    audio.play(pcm)
-                    if phase != .listening { phase = .aiSpeaking }
-                case .learnerStarted:
-                    audio.interrupt()
-                    apply(event)
-                default:
-                    apply(event)
-                }
+                guard let event = await rtc.nextEvent() else { break }
+                apply(event)
             }
-            await live.close()
+            rtc.close()
             if !ended { phase = .ended }
         } catch {
-            await socket?.close()
+            live?.close()
+            if let live { audioDebug = live.status().line }
             notice = "音声に繋げませんでした。\(error.localizedDescription)"
             phase = .ended
         }
@@ -280,6 +254,7 @@ final class TalkSession {
             phase = .waiting
         case .learnerStarted(let id, let at):
             phase = .listening
+            audioLevel = 0.6
             book.beginLearner(id: id, startedAtMs: at)
         case .learnerPartial(let id, let text):
             book.appendLearnerPartial(id: id, text: text)
@@ -290,11 +265,12 @@ final class TalkSession {
             book.resolveLearner(id: id, text: text)
             phase = .waiting
         case .learnerStopped(let id, let at):
+            audioLevel = 0
             book.markLearnerPending(id: id, atMs: at)
-        case .level(let value):
-            audioLevel = value
-        case .aiAudio:
-            phase = .aiSpeaking
+        case .aiAudioStarted:
+            if phase != .listening { phase = .aiSpeaking }
+        case .aiAudioStopped:
+            if phase == .aiSpeaking { phase = .waiting }
         case .failure(let message):
             notice = message
         case .disconnected:
@@ -380,8 +356,3 @@ final class TalkSession {
 }
 
 enum OrbSpeaker { case ai, learner, idle, thinking }
-
-struct TalkAudioStartError: LocalizedError {
-    var detail: String
-    var errorDescription: String? { "マイクとスピーカーを使えませんでした（\(detail)）。" }
-}
