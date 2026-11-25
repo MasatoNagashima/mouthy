@@ -222,6 +222,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Mouthy STG";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Mouthyはカメラを使用しません（通話用ライブラリの仕様上、記載が必要です）。";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "AIと英語で会話するために使います。録音は保存しません。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
@@ -258,6 +259,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Mouthy STG";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Mouthyはカメラを使用しません（通話用ライブラリの仕様上、記載が必要です）。";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "AIと英語で会話するために使います。録音は保存しません。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
