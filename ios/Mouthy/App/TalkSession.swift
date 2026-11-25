@@ -52,7 +52,7 @@ final class TalkSession {
     var statusText: String {
         switch phase {
         case .connecting: return "つないでいます"
-        case .aiSpeaking: return "Mouthyが話しています"
+        case .aiSpeaking: return "パクが話しています"
         case .listening: return "聞いています"
         case .waiting: return hint == nil ? "考えている間は待ちます" : "考えている間は待ちます"
         case .reconnecting: return "つなぎ直しています"

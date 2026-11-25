@@ -1,15 +1,26 @@
 import SwiftUI
+import UIKit
 import MouthyLogic
 
 @main
 struct MouthyApp: App {
     @State private var model = AppModel()
 
+    init() {
+        // Tabs use SF Pro Rounded (v0.7).
+        let base = UIFont.systemFont(ofSize: 10, weight: .bold)
+        if let rounded = base.fontDescriptor.withDesign(.rounded) {
+            let font = UIFont(descriptor: rounded, size: 10)
+            UITabBarItem.appearance().setTitleTextAttributes([.font: font], for: .normal)
+            UITabBarItem.appearance().setTitleTextAttributes([.font: font], for: .selected)
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(model)
-                .tint(MColor.green)
+                .tint(MColor.coralInk)
                 .preferredColorScheme(nil)
         }
     }

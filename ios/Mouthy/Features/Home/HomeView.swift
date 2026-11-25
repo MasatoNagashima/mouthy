@@ -42,7 +42,7 @@ struct HomeView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(dateLabel).font(.subheadline).foregroundStyle(MColor.inkSecondary)
-            Text(greeting).font(.largeTitle.bold())
+            Text(greeting).font(.system(.largeTitle, design: .rounded, weight: .heavy))
         }
         .accessibilityElement(children: .combine)
     }
@@ -50,19 +50,31 @@ struct HomeView: View {
     private var recommendCard: some View {
         let scene = model.recommendation
         return VStack(alignment: .leading, spacing: MSpace.m) {
-            Text("今日のおすすめ").font(.caption).foregroundStyle(MColor.inkSecondary)
-            Text(scene.title).font(.title2.bold())
-            Text("Lv\(scene.level) · 5分 · \(scene.goalJa)").font(.footnote).foregroundStyle(MColor.inkSecondary)
-            Button("話す") {
+            Label("今日のおすすめ", systemImage: "target")
+                .font(.system(.caption, design: .rounded, weight: .bold))
+                .foregroundStyle(MColor.coralInk)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(scene.title).font(.system(.title2, design: .rounded, weight: .heavy))
+                Text("Lv\(scene.level) · 5分 · \(scene.goalJa)").font(.footnote).foregroundStyle(MColor.inkSecondary)
+            }
+            .padding(.trailing, 96)
+            Button {
                 model.briefMinutes = 5
                 model.briefScene = scene
+            } label: {
+                Label("話す", systemImage: "mic.fill")
             }
             .buttonStyle(MouthyButtonStyle())
+            .frame(maxWidth: 160)
         }
         .padding(MSpace.l)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MColor.surface, in: RoundedRectangle(cornerRadius: MRadius.card))
-        .overlay(RoundedRectangle(cornerRadius: MRadius.card).stroke(MColor.apricot, lineWidth: 1.5))
+        .background(MColor.tintCoral, in: RoundedRectangle(cornerRadius: MRadius.card))
+        .overlay(alignment: .topTrailing) {
+            PakuView(expression: .hello, width: 104)
+                .padding(.top, 8)
+                .padding(.trailing, 6)
+        }
     }
 
     private var calendarCard: some View {
@@ -76,14 +88,15 @@ struct HomeView: View {
         let counts = model.counts(in: year, month: month)
         return VStack(alignment: .leading, spacing: MSpace.m) {
             HStack {
-                Text("学習記録").font(.headline)
+                Text("学習記録").font(.mRounded(.headline))
                 if model.streak > 0 {
                     Label("\(model.streak)日連続", systemImage: "flame.fill")
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .foregroundStyle(MColor.apricotInk)
-                        .background(MColor.tintApricot, in: Capsule())
+                        .font(.system(.caption, design: .rounded, weight: .bold))
+                        .foregroundStyle(MColor.onCoral)
+                        .background(MColor.sun, in: Capsule())
                 }
                 Spacer()
                 Text("今月 \(model.monthPracticeDays)日").font(.caption).foregroundStyle(MColor.inkSecondary)
@@ -95,7 +108,7 @@ struct HomeView: View {
                 HStack {
                     Button { monthOffset -= 1 } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }
                     Spacer()
-                    Text("\(year)年\(month)月").font(.headline)
+                    Text("\(year)年\(month)月").font(.mRounded(.headline))
                     Spacer()
                     Button { if StudyCalendar.canMoveForward(year: year, month: month, today: today) { monthOffset += 1 } } label: {
                         Image(systemName: "chevron.right").frame(width: 44, height: 44)
@@ -126,13 +139,13 @@ struct HomeView: View {
             model.dayKey = key
         } label: {
             Text(cell.day.map(String.init) ?? "")
-                .font(.footnote.weight(cell.isToday ? .bold : .regular))
+                .font(.system(.footnote, design: .rounded, weight: cell.isToday ? .bold : .medium))
                 .frame(width: 36, height: 36)
-                .foregroundStyle(level >= 3 ? Color.white : MColor.ink)
+                .foregroundStyle(level >= 2 ? MColor.onCoral : MColor.ink)
                 .background(dayFill(level), in: RoundedRectangle(cornerRadius: MRadius.day))
                 .overlay {
                     RoundedRectangle(cornerRadius: MRadius.day)
-                        .stroke(cell.isToday ? MColor.apricot : (model.dayKey == cell.key ? MColor.ink : .clear), lineWidth: cell.isToday || model.dayKey == cell.key ? 2 : 0)
+                        .stroke(cell.isToday ? MColor.coralInk : (model.dayKey == cell.key ? MColor.ink : .clear), lineWidth: cell.isToday || model.dayKey == cell.key ? 2 : 0)
                 }
                 .frame(width: 44, height: 44)
                 .opacity(cell.isFuture ? 0.35 : 1)
@@ -145,9 +158,9 @@ struct HomeView: View {
 
     private func dayFill(_ level: Int) -> Color {
         switch level {
-        case 1: return MColor.green.opacity(0.45)
-        case 2: return MColor.green.opacity(0.75)
-        case 3: return MColor.green
+        case 1: return MColor.coral.opacity(0.45)
+        case 2: return MColor.coral.opacity(0.75)
+        case 3: return MColor.coral
         default: return MColor.fill
         }
     }
@@ -163,7 +176,7 @@ struct HomeView: View {
         let points = ProgressMath.series(model.sessions.map(\.snapshot), range: range, today: Date())
         let totals = model.sessions.map(\.total).reversed()
         return VStack(alignment: .leading, spacing: MSpace.m) {
-            Text("伸び").font(.headline)
+            Text("伸び").font(.mRounded(.title3, weight: .heavy))
             Picker("期間", selection: $range) {
                 ForEach(TrendRange.allCases, id: \.self) { item in
                     Text(item.title).tag(item)
@@ -189,7 +202,7 @@ struct HomeView: View {
                 }
                 .chartForegroundStyleScale([
                     "総合点": MColor.ink,
-                    "意思疎通": MColor.green,
+                    "意思疎通": MColor.communication,
                     "流暢さ": MColor.fluency,
                     "正確さ": MColor.accuracy,
                 ])
@@ -223,7 +236,7 @@ struct HomeView: View {
     private func metric(_ title: String, _ value: String, _ delta: String?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.caption2).foregroundStyle(MColor.inkSecondary)
-            Text(value).font(.headline).monospacedDigit()
+            Text(value).font(.mRounded(.headline)).monospacedDigit()
             if let delta { Text(delta).font(.caption2).foregroundStyle(MColor.inkTertiary) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -300,7 +313,7 @@ struct DaySessionsSheet: View {
                                 Spacer()
                                 VStack(alignment: .trailing) {
                                     Text("総合点").font(.caption2).foregroundStyle(MColor.inkSecondary)
-                                    Text("\(session.total)").font(.title2.bold()).monospacedDigit()
+                                    Text("\(session.total)").font(.mRounded(.title2)).monospacedDigit()
                                 }
                             }
                             Text("\(time(session.startedAt)) · \(max(1, session.durationSec / 60))分")

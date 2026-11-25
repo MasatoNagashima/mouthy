@@ -17,20 +17,38 @@ struct TalkView: View {
                     Text(notice).font(.caption).foregroundStyle(MColor.inkSecondary).padding(.horizontal, MSpace.l)
                 }
                 if session.captionsOn {
-                    TalkStatusStrip(phase: session.phase, text: session.statusText, level: session.audioLevel, reduceMotion: reduceMotion)
+                    VStack(spacing: 10) {
+                        PakuStage(speaker: session.orbSpeaker, level: session.audioLevel, size: 112)
+                        TalkStatusPill(phase: session.phase, text: session.statusText, level: session.audioLevel)
+                    }
+                    .padding(.top, 4)
                     TranscriptList(book: session.book, hint: session.hint)
                 } else {
+                    TalkStatusPill(phase: session.phase, text: session.statusText, level: session.audioLevel)
+                        .padding(.top, 4)
                     Spacer()
-                    VoiceOrb(speaker: session.orbSpeaker, level: session.audioLevel, size: 132, reduceMotion: reduceMotion)
-                    Text(session.statusText).font(.headline).padding(.top, 12)
-                    Text("字幕はオフです。会話の記録は、振り返りでいつでも読めます。")
+                    PakuStage(speaker: session.orbSpeaker, level: session.audioLevel, size: 220)
+                    Text(launch.diagnostic ? "パク" : "パク（\(launch.scene.roleJa)）")
                         .font(.footnote)
                         .foregroundStyle(MColor.inkSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                        .padding(.top, 8)
-                    if let hint = session.hint { hintCard(hint).padding() }
+                        .padding(.top, 12)
                     Spacer()
+                    if let hint = session.hint {
+                        HintCard(hint: hint).padding(.horizontal, MSpace.l)
+                    } else {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "captions.bubble")
+                                .foregroundStyle(MColor.inkSecondary)
+                                .accessibilityHidden(true)
+                            Text("字幕はオフです。会話の記録は、振り返りでいつでも読めます。")
+                                .font(.footnote)
+                                .foregroundStyle(MColor.inkSecondary)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(MSpace.m)
+                        .background(MColor.fill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .padding(.horizontal, MSpace.l)
+                    }
                 }
                 controls(session)
             } else {
@@ -58,7 +76,7 @@ struct TalkView: View {
             }
             .accessibilityLabel("会話を終える")
             VStack(alignment: .leading, spacing: 2) {
-                Text(launch.diagnostic ? "3分レベル診断" : launch.scene.title).font(.headline)
+                Text(launch.diagnostic ? "3分レベル診断" : launch.scene.title).font(.mRounded(.headline))
                 if launch.diagnostic {
                     Text("これは点数ではなく、スタート地点を知るための会話です")
                         .font(.caption2)
@@ -66,7 +84,7 @@ struct TalkView: View {
                 }
             }
             Spacer()
-            Text(clock).font(.headline.monospacedDigit()).foregroundStyle(MColor.apricotInk)
+            Text(clock).font(.mRounded(.headline)).monospacedDigit().foregroundStyle(MColor.inkSecondary)
         }
         .padding(.horizontal, MSpace.s)
     }
@@ -82,8 +100,9 @@ struct TalkView: View {
                 VStack(spacing: 4) {
                     Image(systemName: session.captionsOn ? "captions.bubble.fill" : "captions.bubble")
                         .frame(width: 56, height: 56)
-                        .background(session.captionsOn ? MColor.tintGreen : MColor.fill, in: Circle())
-                    Text(session.captionsOn ? "字幕オン" : "字幕オフ").font(.caption2)
+                        .foregroundStyle(session.captionsOn ? MColor.coralInk : MColor.inkSecondary)
+                        .background(session.captionsOn ? MColor.tintCoral : MColor.fill, in: Circle())
+                    Text(session.captionsOn ? "字幕オン" : "字幕オフ").font(.system(.caption2, design: .rounded, weight: .bold))
                 }
             }
             .accessibilityLabel(session.captionsOn ? "字幕オン" : "字幕オフ")
@@ -93,7 +112,8 @@ struct TalkView: View {
                     .frame(width: 84, height: 84)
                     .foregroundStyle(micForeground(session.phase))
                     .background(micBackground(session.phase), in: Circle())
-                    .overlay(Circle().stroke(MColor.green, lineWidth: session.phase == .waiting ? 2 : 0))
+                    .overlay(Circle().stroke(MColor.user, lineWidth: session.phase == .waiting ? 2 : 0))
+                    .shadow(color: session.phase == .listening ? MColor.user.opacity(0.35) : .clear, radius: 10)
             }
             .disabled(session.phase == .connecting || session.phase == .reconnecting)
             .accessibilityLabel(session.phase == .paused ? "再開" : "マイク")
@@ -102,15 +122,16 @@ struct TalkView: View {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: "lightbulb.fill")
                             .frame(width: 56, height: 56)
-                            .background(MColor.tintAmber, in: Circle())
+                            .foregroundStyle(MColor.hintInk)
+                            .background(MColor.tintHint, in: Circle())
                         Text("\(session.hintsRemaining)")
-                            .font(.caption2.bold())
+                            .font(.system(.caption2, design: .rounded, weight: .heavy))
                             .padding(4)
-                            .background(MColor.amber, in: Circle())
-                            .foregroundStyle(.white)
+                            .background(MColor.sun, in: Circle())
+                            .foregroundStyle(MColor.onCoral)
                             .offset(x: 6, y: -4)
                     }
-                    Text("ヒント").font(.caption2)
+                    Text("ヒント").font(.system(.caption2, design: .rounded, weight: .bold))
                 }
             }
             .disabled(session.hintsRemaining == 0)
@@ -122,43 +143,18 @@ struct TalkView: View {
 
     private func micForeground(_ phase: TalkPhase) -> Color {
         switch phase {
-        case .listening: return MColor.onGreen
+        case .listening: return MColor.surface
         case .aiSpeaking, .paused, .connecting, .reconnecting: return MColor.inkSecondary
-        default: return MColor.green
+        default: return MColor.user
         }
     }
 
     private func micBackground(_ phase: TalkPhase) -> Color {
         switch phase {
-        case .listening: return MColor.green
-        case .aiSpeaking: return MColor.fill
+        case .listening: return MColor.user
+        case .aiSpeaking: return MColor.tintCoral
         default: return MColor.surface
         }
-    }
-
-    private func hintCard(_ hint: HintPresentation) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(hint.title).font(.caption.weight(.semibold)).foregroundStyle(MColor.amber)
-            Text(hint.prompt).font(.body)
-            ForEach(hint.choices, id: \.self) { choice in
-                Text(choice)
-                    .font(.callout)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(MColor.surface, in: RoundedRectangle(cornerRadius: 12))
-            }
-            if let starter = hint.starter {
-                Text("こう言いはじめてみましょう").font(.caption).foregroundStyle(MColor.inkSecondary)
-                Text(starter).font(.title3.bold())
-            }
-            Text(hint.stage >= 2 ? "タップせずに、声で答えてください" : "ヒントを使っても減点されません")
-                .font(.caption2)
-                .foregroundStyle(MColor.inkTertiary)
-        }
-        .padding(MSpace.l)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MColor.tintAmber, in: RoundedRectangle(cornerRadius: MRadius.card))
-        .accessibilityElement(children: .combine)
     }
 
     private func end() async {
@@ -171,71 +167,157 @@ struct TalkView: View {
     }
 }
 
-struct TalkStatusStrip: View {
+/// The state pill under Paku: 「パクが話しています」 / 「聞いています」 / 「考えている間は待ちます」.
+struct TalkStatusPill: View {
     var phase: TalkPhase
     var text: String
     var level: Double
-    var reduceMotion: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            VoiceOrb(speaker: orb, level: level, size: 44, reduceMotion: reduceMotion)
-            Text(text).font(.subheadline.weight(.semibold))
-            Spacer()
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .bold))
+            Text(text)
+                .font(.system(.footnote, design: .rounded, weight: .bold))
+            if phase == .listening {
+                LevelBars(level: level)
+            }
         }
-        .padding(.horizontal, MSpace.l)
-        .padding(.vertical, 8)
+        .foregroundStyle(foreground)
+        .padding(.horizontal, 12)
+        .frame(height: 30)
+        .background(background, in: Capsule())
         .accessibilityElement(children: .combine)
     }
 
-    private var orb: OrbSpeaker {
+    private var symbol: String {
         switch phase {
-        case .aiSpeaking: return .ai
-        case .listening: return .learner
-        case .waiting, .paused: return .thinking
-        default: return .idle
+        case .aiSpeaking: return "speaker.wave.2.fill"
+        case .listening: return "mic.fill"
+        case .waiting: return "hourglass"
+        case .paused: return "pause.fill"
+        default: return "ellipsis"
+        }
+    }
+
+    private var foreground: Color {
+        switch phase {
+        case .aiSpeaking: return MColor.coralInk
+        case .listening: return MColor.user
+        default: return MColor.inkSecondary
+        }
+    }
+
+    private var background: Color {
+        switch phase {
+        case .aiSpeaking: return MColor.tintCoral
+        case .listening: return MColor.tintUser
+        default: return MColor.fill
         }
     }
 }
 
-struct VoiceOrb: View {
+/// Small live level meter used while the learner is speaking.
+struct LevelBars: View {
+    var level: Double
+    private static let weights: [Double] = [0.5, 0.8, 1.0, 0.7, 0.45]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Self.weights.indices, id: \.self) { index in
+                Capsule()
+                    .frame(width: 3, height: 4 + 10 * CGFloat(min(1, max(0.15, level)) * Self.weights[index]))
+            }
+        }
+        .frame(height: 14)
+        .animation(.easeOut(duration: 0.12), value: level)
+        .accessibilityHidden(true)
+    }
+}
+
+/// パク replaces the old voice orb. Expression follows the conversation state.
+struct PakuStage: View {
     var speaker: OrbSpeaker
     var level: Double
     var size: CGFloat
-    var reduceMotion: Bool
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1.0 / 30.0, paused: reduceMotion)) { context in
-            let wave = reduceMotion ? 1.0 : 1 + 0.08 * max(level, speaker == .ai ? 0.4 : 0) * abs(sin(context.date.timeIntervalSinceReferenceDate * 3))
-            ZStack {
-                Circle().stroke(border, style: StrokeStyle(lineWidth: speaker == .thinking ? 2 : 0, dash: speaker == .thinking ? [4, 3] : []))
-                Circle().fill(fill).padding(speaker == .thinking ? 4 : 0)
-                Image(systemName: symbol)
-                    .font(.system(size: size * 0.28, weight: .semibold))
-                    .foregroundStyle(glyph)
-            }
-            .frame(width: size, height: size)
-            .scaleEffect(speaker == .ai && !reduceMotion ? wave : 1)
+        ZStack {
+            Circle().fill(disc)
+            PakuView(expression: expression, width: size * (expression == .think ? 0.74 : 0.8), level: level, animated: speaker == .ai)
+                .offset(y: expression == .think ? -size * 0.02 : size * 0.02)
         }
+        .frame(width: size, height: size)
+        .animation(.easeInOut(duration: 0.2), value: speaker)
         .accessibilityHidden(true)
     }
 
-    private var fill: Color {
+    private var expression: PakuExpression {
         switch speaker {
-        case .ai: return MColor.apricot
-        case .learner: return MColor.green
-        case .thinking: return MColor.surface
-        case .idle: return MColor.fill
+        case .ai: return .talk
+        case .learner: return .listen
+        case .thinking: return .think
+        case .idle: return .hello
         }
     }
-    private var border: Color { speaker == .thinking ? MColor.inkTertiary : .clear }
-    private var glyph: Color { speaker == .learner || speaker == .ai ? MColor.onGreen : MColor.inkSecondary }
-    private var symbol: String {
+
+    private var disc: Color {
         switch speaker {
-        case .ai: return "waveform"
-        case .learner: return "waveform"
-        case .thinking: return "ellipsis"
-        case .idle: return "hourglass"
+        case .ai: return MColor.tintCoral
+        case .learner: return MColor.tintUser
+        case .thinking, .idle: return MColor.fill
+        }
+    }
+}
+
+/// Hint card (ヒント1〜3). Used in the transcript and when captions are off.
+struct HintCard: View {
+    var hint: HintPresentation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(hint.title, systemImage: "lightbulb")
+                .font(.system(.caption, design: .rounded, weight: .bold))
+                .foregroundStyle(MColor.hintInk)
+            Text(hint.prompt).font(.body.weight(.semibold)).foregroundStyle(MColor.ink)
+            if !hint.choices.isEmpty {
+                FlowChoices(choices: hint.choices)
+            }
+            if let starter = hint.starter {
+                Text("こう言いはじめてみましょう").font(.caption).foregroundStyle(MColor.inkSecondary)
+                Text(starter).font(.system(.title3, design: .rounded, weight: .bold)).foregroundStyle(MColor.ink)
+            }
+            Text(hint.stage >= 2 ? "タップせずに、声で答えてください" : "ヒントを使っても減点されません")
+                .font(.caption2)
+                .foregroundStyle(MColor.inkTertiary)
+        }
+        .padding(MSpace.l)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MColor.tintHint, in: RoundedRectangle(cornerRadius: MRadius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: MRadius.card, style: .continuous).stroke(MColor.sun.opacity(0.5), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct FlowChoices: View {
+    var choices: [String]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { chips }
+            VStack(alignment: .leading, spacing: 8) { chips }
+        }
+    }
+
+    @ViewBuilder
+    private var chips: some View {
+        ForEach(choices, id: \.self) { choice in
+            Text(choice)
+                .font(.callout)
+                .foregroundStyle(MColor.ink)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(MColor.surface, in: Capsule())
         }
     }
 }
@@ -253,8 +335,7 @@ struct TranscriptList: View {
                         TranscriptBubble(utterance: utterance).id(utterance.id)
                     }
                     if let hint {
-                        Text(hint.title).font(.caption.weight(.semibold)).foregroundStyle(MColor.amber).frame(maxWidth: .infinity, alignment: .leading)
-                        Text(hint.prompt).frame(maxWidth: .infinity, alignment: .leading)
+                        HintCard(hint: hint)
                             .id("hint")
                     }
                 }
@@ -278,23 +359,32 @@ struct TranscriptBubble: View {
         HStack {
             if mine { Spacer(minLength: 40) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
-                Text(mine ? "あなた" : "Mouthy").font(.caption).foregroundStyle(MColor.inkTertiary)
+                HStack(spacing: 4) {
+                    if !mine {
+                        Circle().fill(MColor.coral).frame(width: 6, height: 6)
+                    }
+                    Text(mine ? "あなた" : "パク")
+                        .font(.system(.caption2, design: .rounded, weight: .bold))
+                        .foregroundStyle(mine ? MColor.user : MColor.coralInk)
+                }
                 Text(utterance.text.isEmpty ? " " : utterance.text)
                     .font(.body)
                     .foregroundStyle(utterance.state == .partial || utterance.state == .pending || utterance.state == .streaming ? MColor.inkTertiary : MColor.ink)
                     .padding(12)
-                    .background(mine ? MColor.tintGreen : MColor.surface, in: RoundedRectangle(cornerRadius: MRadius.card))
+                    .background(mine ? MColor.tintUser : MColor.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .overlay {
                         if utterance.state == .pending || utterance.state == .failed {
-                            RoundedRectangle(cornerRadius: MRadius.card).stroke(MColor.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                            RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(MColor.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         } else if mine {
-                            RoundedRectangle(cornerRadius: MRadius.card).stroke(MColor.green.opacity(0.45), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(MColor.user.opacity(utterance.state == .partial ? 0.9 : 0.25), lineWidth: utterance.state == .partial ? 2 : 1)
+                        } else {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(MColor.coral.opacity(0.35), lineWidth: 1)
                         }
                     }
             }
             .frame(maxWidth: 320, alignment: mine ? .trailing : .leading)
             if !mine { Spacer(minLength: 40) }
         }
-        .accessibilityLabel("\(mine ? "あなた" : "Mouthy")：\(utterance.text)")
+        .accessibilityLabel("\(mine ? "あなた" : "パク")：\(utterance.text)")
     }
 }
