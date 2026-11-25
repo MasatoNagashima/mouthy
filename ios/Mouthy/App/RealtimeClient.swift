@@ -1,112 +1,294 @@
 import AVFoundation
 import Foundation
+import WebRTC
 
 enum RealtimeEvent {
     case aiDelta(id: String, text: String, at: Int)
-    case aiAudio(Data)
     case aiDone(id: String)
+    case aiAudioStarted
+    case aiAudioStopped
     case learnerStarted(id: String, at: Int)
     case learnerPartial(id: String, text: String)
     case learnerFinal(id: String, text: String, at: Int)
     case learnerStopped(id: String, at: Int)
-    case level(Double)
     case failure(String)
     case disconnected
 }
 
-/// OpenAI Realtime の WebSocket。短命トークンだけを使い、APIキーは持たない。
-/// 音声の中身はこのアプリのサーバーを通らない。
+/// WebRTC 接続の状態（STG の検証用に画面へ出す）。
+struct RealtimeStatus {
+    var connection = "未接続"
+    var ice = "-"
+    var dataChannel = "閉"
+    var micEnabled = false
+    var remoteAudio = false
+    var output = ""
+    var lastError: String?
+
+    var line: String {
+        var parts = [
+            "接続 \(connection)",
+            "ICE \(ice)",
+            "データ \(dataChannel)",
+            micEnabled ? "マイク オン" : "マイク オフ",
+            remoteAudio ? "AI音声トラック あり" : "AI音声トラック なし",
+            "出力 \(output.isEmpty ? "-" : output)",
+        ]
+        if let lastError { parts.append("エラー: \(lastError)") }
+        return parts.joined(separator: " / ")
+    }
+}
+
+enum RealtimeError: LocalizedError {
+    case setup(String)
+    case answer(Int, String)
+
+    var errorDescription: String? {
+        switch self {
+        case .setup(let message): return message
+        case .answer(let code, let body): return "音声サーバーが接続を受け付けませんでした（\(code)）\(body)"
+        }
+    }
+}
+
+/// OpenAI Realtime に WebRTC でつなぐ。マイクの取り込み・AI の声の再生・エコー除去・
+/// 揺らぎの吸収は WebRTC が行い、AI の声は受信した音声トラックがそのまま鳴る。
+/// 文字起こしなどのイベントはデータチャネル「oai-events」で受け取る。
+/// 使うのはサーバーが発行した短命トークンだけで、APIキーはアプリに持たない。
 /// セッションの設定（指示文・声・文字起こし・ノイズ除去・ターン検出）はサーバーが
-/// 一時トークン発行時に入れているので、ここでは上書きしない。
-actor RealtimeSocket {
+/// トークン発行時に入れているので、ここでは上書きしない。
+///
+/// WebRTC のデリゲートは別スレッドから呼ばれるので、状態とイベントの列は lock で守る。
+final class RealtimeRTC: NSObject, RTCPeerConnectionDelegate, RTCDataChannelDelegate, @unchecked Sendable {
+    private static let factory: RTCPeerConnectionFactory = {
+        _ = RTCInitializeSSL()
+        return RTCPeerConnectionFactory()
+    }()
+
     private let token: String
-    private let model: String
     private let started = Date()
-    private var task: URLSessionWebSocketTask?
+    private let lock = NSLock()
+    private var peer: RTCPeerConnection?
+    private var channel: RTCDataChannel?
+    private var micTrack: RTCAudioTrack?
     private var events: [RealtimeEvent] = []
-    private var waiters: [CheckedContinuation<RealtimeEvent?, Never>] = []
+    private var waiter: CheckedContinuation<RealtimeEvent?, Never>?
     private var closed = false
+    private var greeted = false
+    private var state = RealtimeStatus()
 
-    init(token: String, model: String) {
+    init(token: String) {
         self.token = token
-        self.model = model
+        super.init()
     }
 
+    /// 音声セッションを会話向け（スピーカーから出す・エコー除去）にして、接続する。
+    @MainActor
     func connect() async throws {
-        var components = URLComponents(string: "wss://api.openai.com/v1/realtime")!
-        components.queryItems = [URLQueryItem(name: "model", value: model)]
-        var request = URLRequest(url: components.url!)
+        try Self.configureAudioSession()
+
+        let config = RTCConfiguration()
+        config.sdpSemantics = .unifiedPlan
+        config.iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
+        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        guard let peer = Self.factory.peerConnection(with: config, constraints: constraints, delegate: self) else {
+            throw RealtimeError.setup("音声の接続を作れませんでした。")
+        }
+        let source = Self.factory.audioSource(with: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
+        let track = Self.factory.audioTrack(with: source, trackId: "mouthy-mic")
+        track.isEnabled = true
+        _ = peer.add(track, streamIds: ["mouthy"])
+        let dataConfig = RTCDataChannelConfiguration()
+        dataConfig.isOrdered = true
+        let channel = peer.dataChannel(forLabel: "oai-events", configuration: dataConfig)
+        channel?.delegate = self
+        lock.lock()
+        self.peer = peer
+        self.channel = channel
+        self.micTrack = track
+        state.micEnabled = true
+        state.connection = "接続中"
+        lock.unlock()
+
+        let offerConstraints = RTCMediaConstraints(
+            mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": "false"],
+            optionalConstraints: nil
+        )
+        let offer: RTCSessionDescription = try await withCheckedThrowingContinuation { continuation in
+            peer.offer(for: offerConstraints) { sdp, error in
+                if let sdp {
+                    continuation.resume(returning: sdp)
+                } else {
+                    continuation.resume(throwing: error ?? RealtimeError.setup("接続の準備（offer）に失敗しました。"))
+                }
+            }
+        }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            peer.setLocalDescription(offer) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+        // 候補（ICE）を少し集めてから送る。集まりきらなくても 1.5 秒で先に進む。
+        for _ in 0..<15 where peer.iceGatheringState != .complete {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let localSDP = peer.localDescription?.sdp ?? offer.sdp
+
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/realtime/calls")!)
+        request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let session = URLSession(configuration: .default)
-        let task = session.webSocketTask(with: request)
-        task.maximumMessageSize = 16 * 1024 * 1024
-        self.task = task
-        task.resume()
-        Task { [weak self] in await self?.receiveLoop() }
-        try await send(["type": "response.create"])
+        request.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(localSDP.utf8)
+        request.timeoutInterval = 20
+        let (body, response) = try await URLSession.shared.data(for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let text = String(data: body, encoding: .utf8) ?? ""
+        guard (200..<300).contains(code), text.hasPrefix("v=") else {
+            throw RealtimeError.answer(code, Self.errorMessage(from: text))
+        }
+        let answer = RTCSessionDescription(type: .answer, sdp: text)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            peer.setRemoteDescription(answer) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+        // データチャネルがすでに開いていたら、ここで最初のあいさつを頼む。
+        greetIfReady()
     }
 
-    func appendAudio(_ pcm: Data) async {
-        guard !pcm.isEmpty else { return }
-        try? await send(["type": "input_audio_buffer.append", "audio": pcm.base64EncodedString()])
+    /// 一時停止中はマイクを止める（相手に音を送らない）。
+    func setMicEnabled(_ enabled: Bool) {
+        lock.lock()
+        micTrack?.isEnabled = enabled
+        state.micEnabled = enabled
+        lock.unlock()
     }
 
     func nextEvent() async -> RealtimeEvent? {
-        if !events.isEmpty { return events.removeFirst() }
-        if closed { return nil }
-        return await withCheckedContinuation { continuation in
-            waiters.append(continuation)
-        }
-    }
-
-    func close() async {
-        closed = true
-        task?.cancel(with: .goingAway, reason: nil)
-        flush(nil)
-    }
-
-    private func send(_ object: [String: Any]) async throws {
-        let data = try JSONSerialization.data(withJSONObject: object)
-        guard let text = String(data: data, encoding: .utf8) else { return }
-        try await task?.send(.string(text))
-    }
-
-    private func receiveLoop() async {
-        guard let task else { return }
-        while !closed {
-            do {
-                let message = try await task.receive()
-                let text: String?
-                switch message {
-                case .string(let value): text = value
-                case .data(let data): text = String(data: data, encoding: .utf8)
-                @unknown default: text = nil
-                }
-                if let text, let event = decode(text) { push(event) }
-            } catch {
-                if !closed { push(.disconnected) }
-                closed = true
-                flush(nil)
-                return
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if !events.isEmpty {
+                let event = events.removeFirst()
+                lock.unlock()
+                continuation.resume(returning: event)
+            } else if closed {
+                lock.unlock()
+                continuation.resume(returning: nil)
+            } else {
+                // 待つのは1か所（TalkSession の受信ループ）だけ。
+                let previous = waiter
+                waiter = continuation
+                lock.unlock()
+                previous?.resume(returning: nil)
             }
         }
     }
 
-    private func push(_ event: RealtimeEvent) {
-        if waiters.isEmpty {
-            events.append(event)
-        } else {
-            waiters.removeFirst().resume(returning: event)
+    /// 何度呼んでもよい。
+    func close() {
+        lock.lock()
+        if closed {
+            lock.unlock()
+            return
+        }
+        closed = true
+        let peer = self.peer
+        let channel = self.channel
+        let waiter = self.waiter
+        self.waiter = nil
+        self.peer = nil
+        self.channel = nil
+        micTrack?.isEnabled = false
+        micTrack = nil
+        state.connection = "終了"
+        lock.unlock()
+        channel?.delegate = nil
+        channel?.close()
+        peer?.delegate = nil
+        peer?.close()
+        waiter?.resume(returning: nil)
+        DispatchQueue.main.async {
+            let session = RTCAudioSession.sharedInstance()
+            session.lockForConfiguration()
+            try? session.setActive(false)
+            session.unlockForConfiguration()
         }
     }
 
-    private func flush(_ event: RealtimeEvent?) {
-        let pending = waiters
-        waiters = []
-        pending.forEach { $0.resume(returning: event) }
+    func status() -> RealtimeStatus {
+        lock.lock()
+        var copy = state
+        lock.unlock()
+        copy.output = AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portName }.joined(separator: ",")
+        return copy
+    }
+
+    // MARK: - 内部
+
+    @MainActor
+    private static func configureAudioSession() throws {
+        let configuration = RTCAudioSessionConfiguration.webRTC()
+        configuration.category = AVAudioSession.Category.playAndRecord.rawValue
+        configuration.mode = AVAudioSession.Mode.voiceChat.rawValue
+        configuration.categoryOptions = [.defaultToSpeaker, .allowBluetooth]
+        // WebRTC が自分で音声セッションを設定し直すときも、スピーカー出力を保つ。
+        RTCAudioSessionConfiguration.setWebRTC(configuration)
+        let session = RTCAudioSession.sharedInstance()
+        session.useManualAudio = false
+        session.lockForConfiguration()
+        defer { session.unlockForConfiguration() }
+        try session.setConfiguration(configuration, active: true)
+    }
+
+    private static func errorMessage(from text: String) -> String {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let detail = json["error"] as? [String: Any],
+              let message = detail["message"] as? String else { return "" }
+        return "：" + String(message.prefix(160))
     }
 
     private func clock() -> Int { Int(Date().timeIntervalSince(started) * 1000) }
+
+    private func push(_ event: RealtimeEvent) {
+        lock.lock()
+        if closed {
+            lock.unlock()
+            return
+        }
+        if let waiter {
+            self.waiter = nil
+            lock.unlock()
+            waiter.resume(returning: event)
+        } else {
+            events.append(event)
+            lock.unlock()
+        }
+    }
+
+    private func updateState(_ change: (inout RealtimeStatus) -> Void) {
+        lock.lock()
+        change(&state)
+        lock.unlock()
+    }
+
+    private func send(_ object: [String: Any]) {
+        lock.lock()
+        let channel = self.channel
+        lock.unlock()
+        guard let channel, channel.readyState == .open,
+              let data = try? JSONSerialization.data(withJSONObject: object) else { return }
+        _ = channel.sendData(RTCDataBuffer(data: data, isBinary: false))
+    }
+
+    /// 最初の一言は AI から（接続が開いたら1回だけ response.create を送る）。
+    private func greetIfReady() {
+        lock.lock()
+        let ready = !greeted && !closed && channel?.readyState == .open
+        if ready { greeted = true }
+        lock.unlock()
+        if ready { send(["type": "response.create"]) }
+    }
 
     private func decode(_ text: String) -> RealtimeEvent? {
         guard let data = text.data(using: .utf8),
@@ -117,9 +299,6 @@ actor RealtimeSocket {
             let id = (json["response_id"] as? String) ?? (json["item_id"] as? String) ?? "ai"
             let delta = (json["delta"] as? String) ?? ""
             return delta.isEmpty ? nil : .aiDelta(id: id, text: delta, at: clock())
-        case "response.output_audio.delta", "response.audio.delta":
-            guard let delta = json["delta"] as? String, let pcm = Data(base64Encoded: delta), !pcm.isEmpty else { return nil }
-            return .aiAudio(pcm)
         case "response.output_audio_transcript.done", "response.audio_transcript.done":
             let id = (json["response_id"] as? String) ?? "ai"
             return .aiDone(id: id)
@@ -127,6 +306,10 @@ actor RealtimeSocket {
             let response = json["response"] as? [String: Any]
             let id = (response?["id"] as? String) ?? "ai"
             return .aiDone(id: id)
+        case "output_audio_buffer.started":
+            return .aiAudioStarted
+        case "output_audio_buffer.stopped", "output_audio_buffer.cleared":
+            return .aiAudioStopped
         case "input_audio_buffer.speech_started":
             let id = (json["item_id"] as? String) ?? UUID().uuidString
             return .learnerStarted(id: id, at: clock())
@@ -144,223 +327,95 @@ actor RealtimeSocket {
             let code = (detail?["code"] as? String) ?? ""
             // 発話がないまま確定しようとしたなど、会話を止めなくてよいエラーは無視する。
             if code == "input_audio_buffer_commit_empty" || code == "response_cancel_not_active" { return nil }
-            return .failure((detail?["message"] as? String) ?? "音声サーバーでエラーが起きました。")
+            let message = (detail?["message"] as? String) ?? "音声サーバーでエラーが起きました。"
+            updateState { $0.lastError = String(message.prefix(80)) }
+            return .failure(message)
         default:
             return nil
         }
     }
-}
 
-/// マイク入力（24kHz PCM16 に変換して送る）と、AI の音声（24kHz PCM16）の再生。
-/// 入力ノードの Voice Processing を有効にして、スピーカーから出た AI の声を
-/// マイクが拾わないようにする（エコーキャンセル）。
-///
-/// iPhone は Voice Processing を有効にしたときや、音の出口（スピーカー・イヤホン）が
-/// 変わったときに AVAudioEngine を黙って止めることがある。止まるとマイクも再生も
-/// 同時に無音になるので、構成変更・中断の通知と1秒ごとの見回りで作り直す。
-final class RealtimeAudio {
-    private var engine: AVAudioEngine?
-    private var player: AVAudioPlayerNode?
-    /// AVAudioPlayerNode は Float32 の非インターリーブしか再生できないので、受け取った PCM16 を変換して流す。
-    private let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
-    private var onLevel: ((Double) -> Void)?
-    private var onPCM: ((Data) -> Void)?
-    private var observers: [NSObjectProtocol] = []
-    private var running = false
-    private let lock = NSLock()
-    private var micSamples = 0
-    private var micPeak: Float = 0
-    private var aiSamples = 0
-    private(set) var restarts = 0
-    private(set) var voiceProcessing = false
-    private(set) var lastError: String?
+    // MARK: - RTCPeerConnectionDelegate（別スレッドから呼ばれる）
 
-    func start(onLevel: @escaping (Double) -> Void, onPCM: @escaping (Data) -> Void) throws {
-        self.onLevel = onLevel
-        self.onPCM = onPCM
-        try configureSession()
-        running = true
-        observe()
-        try build()
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
+        if !stream.audioTracks.isEmpty { updateState { $0.remoteAudio = true } }
     }
 
-    func stop() {
-        running = false
-        observers.forEach { NotificationCenter.default.removeObserver($0) }
-        observers = []
-        teardown()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    }
+    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
 
-    /// AI の音声（24kHz・モノラル・PCM16 リトルエンディアン）を再生キューに積む。
-    func play(_ pcm: Data) {
-        let frames = pcm.count / MemoryLayout<Int16>.size
-        guard frames > 0 else { return }
-        if engine?.isRunning != true { rebuild(reason: "再生前にエンジンが止まっていた") }
-        guard let engine, engine.isRunning, let player,
-              let buffer = AVAudioPCMBuffer(pcmFormat: playbackFormat, frameCapacity: AVAudioFrameCount(frames)),
-              let out = buffer.floatChannelData
-        else { return }
-        buffer.frameLength = AVAudioFrameCount(frames)
-        pcm.withUnsafeBytes { raw in
-            for index in 0..<frames {
-                let sample = Int16(littleEndian: raw.loadUnaligned(fromByteOffset: index * 2, as: Int16.self))
-                out[0][index] = Float(sample) / 32_768
-            }
+    func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        let label: String
+        switch newState {
+        case .new: label = "new"
+        case .checking: label = "checking"
+        case .connected: label = "connected"
+        case .completed: label = "completed"
+        case .failed: label = "failed"
+        case .disconnected: label = "disconnected"
+        case .closed: label = "closed"
+        case .count: label = "-"
+        @unknown default: label = "?"
         }
-        if !player.isPlaying { player.play() }
-        player.scheduleBuffer(buffer)
-        lock.lock(); aiSamples += frames; lock.unlock()
-    }
-
-    /// 学習者が話しはじめたら、残っている AI の音声を捨てる（割り込み）。
-    func interrupt() {
-        guard let engine, engine.isRunning, let player else { return }
-        player.stop()
-        player.play()
-    }
-
-    /// 1秒ごとに呼ぶ。止まっていたら作り直し、画面に出す短い状態を返す。
-    func healthCheck() -> String {
-        if running, engine?.isRunning != true { rebuild(reason: "エンジンが止まっていた") }
-        lock.lock()
-        let micSec = Double(micSamples) / 24_000
-        let aiSec = Double(aiSamples) / 24_000
-        let peak = micPeak
-        micPeak = 0
-        lock.unlock()
-        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portName }.joined(separator: ",")
-        var parts = [
-            String(format: "マイク送信 %.0f秒", micSec),
-            String(format: "入力音量 %.2f", peak),
-            String(format: "AI音声 %.0f秒", aiSec),
-            engine?.isRunning == true ? "エンジン動作中" : "エンジン停止",
-            "出力 \(outputs.isEmpty ? "なし" : outputs)",
-            voiceProcessing ? "エコー除去オン" : "エコー除去オフ",
-        ]
-        if restarts > 0 { parts.append("再起動 \(restarts)回") }
-        if let lastError { parts.append("エラー: \(lastError)") }
-        return parts.joined(separator: " / ")
-    }
-
-    private func configureSession() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
-        try? session.setPreferredSampleRate(48_000)
-        try? session.setPreferredIOBufferDuration(0.02)
-        try session.setActive(true)
-    }
-
-    /// エンジンは毎回新しく作る（構成変更のあとで古いエンジンをつなぎ直すより確実）。
-    private func build() throws {
-        teardown()
-        let engine = AVAudioEngine()
-        let player = AVAudioPlayerNode()
-        let input = engine.inputNode
-        do {
-            try input.setVoiceProcessingEnabled(true)
-            voiceProcessing = true
-        } catch {
-            voiceProcessing = false
-            lastError = "エコー除去を使えません"
-        }
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            throw RealtimeAudioError.microphoneUnavailable
-        }
-        let rate = format.sampleRate
-        input.installTap(onBus: 0, bufferSize: 4_800, format: format) { [weak self] buffer, _ in
-            self?.capture(buffer, rate: rate)
-        }
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
-        engine.mainMixerNode.outputVolume = 1
-        engine.prepare()
-        try engine.start()
-        player.play()
-        self.engine = engine
-        self.player = player
-    }
-
-    private func teardown() {
-        player?.stop()
-        engine?.inputNode.removeTap(onBus: 0)
-        engine?.stop()
-        player = nil
-        engine = nil
-    }
-
-    private func rebuild(reason: String) {
-        guard running, restarts < 10 else { return }
-        restarts += 1
-        do {
-            try? AVAudioSession.sharedInstance().setActive(true)
-            try build()
-        } catch {
-            lastError = "\(reason)・再開できず（\(error.localizedDescription)）"
+        updateState { $0.ice = label }
+        if newState == .failed {
+            updateState { $0.lastError = "ICE 接続に失敗" }
+            push(.disconnected)
         }
     }
 
-    private func observe() {
-        let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] note in
-            guard let self, let changed = note.object as? AVAudioEngine, changed === self.engine else { return }
-            self.rebuild(reason: "構成が変わった")
-        })
-        observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
-            guard let self,
-                  let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
-            self.rebuild(reason: "中断から戻った")
-        })
-        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
-            try? self.configureSession()
-            self.rebuild(reason: "音声サービスがリセットされた")
-        })
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
+
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCPeerConnectionState) {
+        let label: String
+        switch newState {
+        case .new: label = "new"
+        case .connecting: label = "接続中"
+        case .connected: label = "接続済み"
+        case .disconnected: label = "切断"
+        case .failed: label = "失敗"
+        case .closed: label = "終了"
+        @unknown default: label = "?"
+        }
+        updateState { $0.connection = label }
+        if newState == .failed {
+            updateState { $0.lastError = "接続に失敗" }
+            push(.disconnected)
+        }
     }
 
-    /// マイクの音（48kHz などの Float32）を 24kHz・モノラル・PCM16 にして送る。
-    /// AVAudioConverter は1回ずつ呼ぶと出力が空になることがあるので、平均を取って自前で間引く。
-    private func capture(_ buffer: AVAudioPCMBuffer, rate: Double) {
-        let frames = Int(buffer.frameLength)
-        guard frames > 0, let onPCM else { return }
-        var mono = [Float](repeating: 0, count: frames)
-        if let floats = buffer.floatChannelData {
-            for index in 0..<frames { mono[index] = floats[0][index] }
-        } else if let ints = buffer.int16ChannelData {
-            for index in 0..<frames { mono[index] = Float(ints[0][index]) / 32_768 }
-        } else {
-            return
+    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd rtpReceiver: RTCRtpReceiver, streams mediaStreams: [RTCMediaStream]) {
+        if rtpReceiver.track?.kind == kRTCMediaStreamTrackKindAudio {
+            updateState { $0.remoteAudio = true }
         }
-        let step = rate / 24_000
-        let count = max(0, Int(Double(frames) / step))
-        guard count > 0 else { return }
-        var samples = [Int16](repeating: 0, count: count)
-        var peak: Float = 0
-        var sum: Double = 0
-        for index in 0..<count {
-            let from = Int(Double(index) * step)
-            let to = min(frames, max(from + 1, Int(Double(index + 1) * step)))
-            var acc: Float = 0
-            for source in from..<to { acc += mono[source] }
-            let value = max(-1, min(1, acc / Float(to - from)))
-            peak = max(peak, abs(value))
-            sum += Double(abs(value))
-            samples[index] = Int16(value * 32_767)
-        }
-        let data = samples.withUnsafeBufferPointer { Data(buffer: $0) }
-        onPCM(data)
-        onLevel?(min(1, (sum / Double(count)) * 8))
-        lock.lock()
-        micSamples += count
-        micPeak = max(micPeak, peak)
-        lock.unlock()
     }
-}
 
-enum RealtimeAudioError: LocalizedError {
-    case microphoneUnavailable
+    // MARK: - RTCDataChannelDelegate（別スレッドから呼ばれる）
 
-    var errorDescription: String? { "マイクを使えませんでした。設定でマイクの許可を確認してください。" }
+    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        switch dataChannel.readyState {
+        case .open:
+            updateState { $0.dataChannel = "開" }
+            greetIfReady()
+        case .closed:
+            updateState { $0.dataChannel = "閉" }
+            push(.disconnected)
+        default:
+            break
+        }
+    }
+
+    func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        guard let text = String(data: buffer.data, encoding: .utf8), let event = decode(text) else { return }
+        push(event)
+    }
 }

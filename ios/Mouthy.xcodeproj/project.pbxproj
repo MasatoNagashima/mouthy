@@ -11,6 +11,7 @@
 		A10000000000000000000060 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000061 /* GoogleSignIn */; };
 		A10000000000000000000063 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000065 /* FirebaseAuth */; };
 		A10000000000000000000064 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000066 /* FirebaseCore */; };
+		A10000000000000000000080 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000081 /* WebRTC */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +32,7 @@
 				A10000000000000000000060 /* GoogleSignIn in Frameworks */,
 				A10000000000000000000063 /* FirebaseAuth in Frameworks */,
 				A10000000000000000000064 /* FirebaseCore in Frameworks */,
+				A10000000000000000000080 /* WebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -79,6 +81,7 @@
 				A10000000000000000000061 /* GoogleSignIn */,
 				A10000000000000000000065 /* FirebaseAuth */,
 				A10000000000000000000066 /* FirebaseCore */,
+				A10000000000000000000081 /* WebRTC */,
 			);
 			productName = "Mouthy STG";
 			productReference = A10000000000000000000004 /* Mouthy STG.app */;
@@ -113,6 +116,7 @@
 				A10000000000000000000040 /* XCLocalSwiftPackageReference "MouthyLogic" */,
 				A10000000000000000000062 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 				A10000000000000000000067 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				A10000000000000000000082 /* XCRemoteSwiftPackageReference "WebRTC" */,
 			);
 			productRefGroup = A10000000000000000000003 /* Products */;
 			projectDirPath = "";
@@ -320,6 +324,14 @@
 				minimumVersion = 11.0.0;
 			};
 		};
+		A10000000000000000000082 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC.git";
+			requirement = {
+				kind = exactVersion;
+				version = 158.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -342,6 +354,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000067 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseCore;
+		};
+		A10000000000000000000081 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000082 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
