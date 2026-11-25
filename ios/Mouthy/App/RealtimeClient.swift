@@ -154,70 +154,50 @@ actor RealtimeSocket {
 /// マイク入力（24kHz PCM16 に変換して送る）と、AI の音声（24kHz PCM16）の再生。
 /// 入力ノードの Voice Processing を有効にして、スピーカーから出た AI の声を
 /// マイクが拾わないようにする（エコーキャンセル）。
+///
+/// iPhone は Voice Processing を有効にしたときや、音の出口（スピーカー・イヤホン）が
+/// 変わったときに AVAudioEngine を黙って止めることがある。止まるとマイクも再生も
+/// 同時に無音になるので、構成変更・中断の通知と1秒ごとの見回りで作り直す。
 final class RealtimeAudio {
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
-    private var converter: AVAudioConverter?
+    private var engine: AVAudioEngine?
+    private var player: AVAudioPlayerNode?
     /// AVAudioPlayerNode は Float32 の非インターリーブしか再生できないので、受け取った PCM16 を変換して流す。
     private let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
+    private var onLevel: ((Double) -> Void)?
+    private var onPCM: ((Data) -> Void)?
+    private var observers: [NSObjectProtocol] = []
+    private var running = false
+    private let lock = NSLock()
+    private var micSamples = 0
+    private var micPeak: Float = 0
+    private var aiSamples = 0
+    private(set) var restarts = 0
+    private(set) var voiceProcessing = false
+    private(set) var lastError: String?
 
     func start(onLevel: @escaping (Double) -> Void, onPCM: @escaping (Data) -> Void) throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
-        try session.setActive(true)
-        let input = engine.inputNode
-        try input.setVoiceProcessingEnabled(true)
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0,
-              let target = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24_000, channels: 1, interleaved: true)
-        else { throw RealtimeAudioError.microphoneUnavailable }
-        converter = AVAudioConverter(from: format, to: target)
-        input.installTap(onBus: 0, bufferSize: 2400, format: format) { [weak self] buffer, _ in
-            guard let self, let converter = self.converter else { return }
-            let ratio = 24_000 / format.sampleRate
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
-            guard let converted = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
-            var error: NSError?
-            var consumed = false
-            converter.convert(to: converted, error: &error) { _, status in
-                if consumed {
-                    status.pointee = .noDataNow
-                    return nil
-                }
-                consumed = true
-                status.pointee = .haveData
-                return buffer
-            }
-            if let channel = converted.int16ChannelData, converted.frameLength > 0 {
-                let count = Int(converted.frameLength)
-                let data = Data(bytes: channel[0], count: count * MemoryLayout<Int16>.size)
-                onPCM(data)
-            }
-            if let floats = buffer.floatChannelData {
-                let count = Int(buffer.frameLength)
-                var sum = 0.0
-                for index in 0..<count { sum += Double(abs(floats[0][index])) }
-                onLevel(min(1, (sum / Double(max(count, 1))) * 8))
-            }
-        }
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
-        engine.prepare()
-        try engine.start()
-        player.play()
+        self.onLevel = onLevel
+        self.onPCM = onPCM
+        try configureSession()
+        running = true
+        observe()
+        try build()
     }
 
     func stop() {
-        player.stop()
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        running = false
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers = []
+        teardown()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     /// AI の音声（24kHz・モノラル・PCM16 リトルエンディアン）を再生キューに積む。
     func play(_ pcm: Data) {
         let frames = pcm.count / MemoryLayout<Int16>.size
-        guard frames > 0,
+        guard frames > 0 else { return }
+        if engine?.isRunning != true { rebuild(reason: "再生前にエンジンが止まっていた") }
+        guard let engine, engine.isRunning, let player,
               let buffer = AVAudioPCMBuffer(pcmFormat: playbackFormat, frameCapacity: AVAudioFrameCount(frames)),
               let out = buffer.floatChannelData
         else { return }
@@ -230,12 +210,152 @@ final class RealtimeAudio {
         }
         if !player.isPlaying { player.play() }
         player.scheduleBuffer(buffer)
+        lock.lock(); aiSamples += frames; lock.unlock()
     }
 
     /// 学習者が話しはじめたら、残っている AI の音声を捨てる（割り込み）。
     func interrupt() {
+        guard let engine, engine.isRunning, let player else { return }
         player.stop()
         player.play()
+    }
+
+    /// 1秒ごとに呼ぶ。止まっていたら作り直し、画面に出す短い状態を返す。
+    func healthCheck() -> String {
+        if running, engine?.isRunning != true { rebuild(reason: "エンジンが止まっていた") }
+        lock.lock()
+        let micSec = Double(micSamples) / 24_000
+        let aiSec = Double(aiSamples) / 24_000
+        let peak = micPeak
+        micPeak = 0
+        lock.unlock()
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portName }.joined(separator: ",")
+        var parts = [
+            String(format: "マイク送信 %.0f秒", micSec),
+            String(format: "入力音量 %.2f", peak),
+            String(format: "AI音声 %.0f秒", aiSec),
+            engine?.isRunning == true ? "エンジン動作中" : "エンジン停止",
+            "出力 \(outputs.isEmpty ? "なし" : outputs)",
+            voiceProcessing ? "エコー除去オン" : "エコー除去オフ",
+        ]
+        if restarts > 0 { parts.append("再起動 \(restarts)回") }
+        if let lastError { parts.append("エラー: \(lastError)") }
+        return parts.joined(separator: " / ")
+    }
+
+    private func configureSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+        try? session.setPreferredSampleRate(48_000)
+        try? session.setPreferredIOBufferDuration(0.02)
+        try session.setActive(true)
+    }
+
+    /// エンジンは毎回新しく作る（構成変更のあとで古いエンジンをつなぎ直すより確実）。
+    private func build() throws {
+        teardown()
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let input = engine.inputNode
+        do {
+            try input.setVoiceProcessingEnabled(true)
+            voiceProcessing = true
+        } catch {
+            voiceProcessing = false
+            lastError = "エコー除去を使えません"
+        }
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw RealtimeAudioError.microphoneUnavailable
+        }
+        let rate = format.sampleRate
+        input.installTap(onBus: 0, bufferSize: 4_800, format: format) { [weak self] buffer, _ in
+            self?.capture(buffer, rate: rate)
+        }
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        engine.mainMixerNode.outputVolume = 1
+        engine.prepare()
+        try engine.start()
+        player.play()
+        self.engine = engine
+        self.player = player
+    }
+
+    private func teardown() {
+        player?.stop()
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        player = nil
+        engine = nil
+    }
+
+    private func rebuild(reason: String) {
+        guard running, restarts < 10 else { return }
+        restarts += 1
+        do {
+            try? AVAudioSession.sharedInstance().setActive(true)
+            try build()
+        } catch {
+            lastError = "\(reason)・再開できず（\(error.localizedDescription)）"
+        }
+    }
+
+    private func observe() {
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] note in
+            guard let self, let changed = note.object as? AVAudioEngine, changed === self.engine else { return }
+            self.rebuild(reason: "構成が変わった")
+        })
+        observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            guard let self,
+                  let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+            self.rebuild(reason: "中断から戻った")
+        })
+        observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            try? self.configureSession()
+            self.rebuild(reason: "音声サービスがリセットされた")
+        })
+    }
+
+    /// マイクの音（48kHz などの Float32）を 24kHz・モノラル・PCM16 にして送る。
+    /// AVAudioConverter は1回ずつ呼ぶと出力が空になることがあるので、平均を取って自前で間引く。
+    private func capture(_ buffer: AVAudioPCMBuffer, rate: Double) {
+        let frames = Int(buffer.frameLength)
+        guard frames > 0, let onPCM else { return }
+        var mono = [Float](repeating: 0, count: frames)
+        if let floats = buffer.floatChannelData {
+            for index in 0..<frames { mono[index] = floats[0][index] }
+        } else if let ints = buffer.int16ChannelData {
+            for index in 0..<frames { mono[index] = Float(ints[0][index]) / 32_768 }
+        } else {
+            return
+        }
+        let step = rate / 24_000
+        let count = max(0, Int(Double(frames) / step))
+        guard count > 0 else { return }
+        var samples = [Int16](repeating: 0, count: count)
+        var peak: Float = 0
+        var sum: Double = 0
+        for index in 0..<count {
+            let from = Int(Double(index) * step)
+            let to = min(frames, max(from + 1, Int(Double(index + 1) * step)))
+            var acc: Float = 0
+            for source in from..<to { acc += mono[source] }
+            let value = max(-1, min(1, acc / Float(to - from)))
+            peak = max(peak, abs(value))
+            sum += Double(abs(value))
+            samples[index] = Int16(value * 32_767)
+        }
+        let data = samples.withUnsafeBufferPointer { Data(buffer: $0) }
+        onPCM(data)
+        onLevel?(min(1, (sum / Double(count)) * 8))
+        lock.lock()
+        micSamples += count
+        micPeak = max(micPeak, peak)
+        lock.unlock()
     }
 }
 

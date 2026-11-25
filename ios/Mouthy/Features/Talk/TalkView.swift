@@ -16,6 +16,15 @@ struct TalkView: View {
                 if let notice = session.notice {
                     Text(notice).font(.caption).foregroundStyle(MColor.inkSecondary).padding(.horizontal, MSpace.l)
                 }
+                if let debug = session.audioDebug {
+                    // STG の検証用。音が出ない・声が届かないときに、どこで止まっているかを見る。
+                    Text(debug)
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .foregroundStyle(MColor.inkTertiary)
+                        .padding(.horizontal, MSpace.l)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if session.captionsOn {
                     VStack(spacing: 10) {
                         PakuStage(speaker: session.orbSpeaker, level: session.audioLevel, size: 112)
@@ -58,6 +67,7 @@ struct TalkView: View {
         }
         .mouthyScreen()
         .onAppear {
+            guard session == nil else { return }
             let previous = model.sessions.first { !$0.isDiagnostic }
             let talk = TalkSession(launch: launch, settings: model.settings, previous: previous, api: model.api())
             session = talk
