@@ -13,12 +13,12 @@ struct ProfileView: View {
                 Section {
                     HStack(spacing: 12) {
                         Text(model.profile.initial)
-                            .font(.title2.bold())
+                            .font(.mRounded(.title2))
                             .frame(width: 56, height: 56)
-                            .background(MColor.green, in: Circle())
-                            .foregroundStyle(MColor.onGreen)
+                            .background(MColor.user, in: Circle())
+                            .foregroundStyle(MColor.surface)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(model.profile.displayName).font(.headline)
+                            Text(model.profile.displayName).font(.mRounded(.headline))
                             Text(levelLine).font(.footnote).foregroundStyle(MColor.inkSecondary)
                             Text("TOEIC \(model.profile.toeic.title)").font(.caption).foregroundStyle(MColor.inkTertiary)
                         }
@@ -34,7 +34,7 @@ struct ProfileView: View {
                     }
                 }
                 Section("会話") {
-                    Picker("AIの話す速さ", selection: Bindable(model).settings.speechSpeed) {
+                    Picker("パクの話す速さ", selection: Bindable(model).settings.speechSpeed) {
                         Text("ゆっくり").tag(0.9)
                         Text("ふつう").tag(1.0)
                         Text("少し速く").tag(1.05)
@@ -84,7 +84,7 @@ struct ProfileView: View {
     private func stat(_ title: String, _ value: String) -> some View {
         VStack(spacing: 2) {
             Text(title).font(.caption).foregroundStyle(MColor.inkSecondary)
-            Text(value).font(.headline).monospacedDigit()
+            Text(value).font(.mRounded(.headline)).monospacedDigit()
         }
         .frame(maxWidth: .infinity)
     }

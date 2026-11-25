@@ -15,10 +15,16 @@ struct FeedbackView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: MSpace.xl) {
-                    Text("\(session.sceneTitle) · \(max(1, session.durationSec / 60))分 · \(when)")
-                        .font(.footnote)
-                        .foregroundStyle(MColor.inkSecondary)
-                    Text("おつかれさまでした").font(.title3.bold())
+                    HStack(spacing: 10) {
+                        PakuView(expression: .cheer, width: 64)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(session.sceneTitle) · \(max(1, session.durationSec / 60))分 · \(when)")
+                                .font(.footnote)
+                                .foregroundStyle(MColor.inkSecondary)
+                            Text("おつかれさまでした！").font(.mRounded(.title3, weight: .heavy))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
                     TotalScoreHero(total: session.total, delta: session.delta, size: scoreSize, reduceMotion: reduceMotion)
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 8) { tiles }
@@ -26,11 +32,16 @@ struct FeedbackView: View {
                     }
                     Text(metricsLine).font(.footnote).foregroundStyle(MColor.inkSecondary)
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("よかったところ").font(.headline)
-                        Text(session.strength).font(.body)
+                        Label("よかったところ", systemImage: "sparkles")
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundStyle(MColor.coralInk)
+                        Text(session.strength).font(.body).foregroundStyle(MColor.ink)
                     }
+                    .padding(MSpace.l)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(MColor.tintCoral, in: RoundedRectangle(cornerRadius: MRadius.card, style: .continuous))
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("次の一手").font(.headline)
+                        Text("次の一手").font(.mRounded(.headline))
                         Text("伝わりにくかったところだけ、2つに絞りました。")
                             .font(.footnote)
                             .foregroundStyle(MColor.inkSecondary)
@@ -46,7 +57,7 @@ struct FeedbackView: View {
                     }
                     if !session.stuck.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("詰まった表現").font(.headline)
+                            Text("詰まった表現").font(.mRounded(.headline))
                             ForEach(session.stuck) { phrase in
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
@@ -55,7 +66,7 @@ struct FeedbackView: View {
                                     }
                                     Spacer()
                                     Button { speak(phrase.phrase) } label: {
-                                        Image(systemName: "speaker.wave.2.fill").frame(width: 44, height: 44)
+                                        Image(systemName: "speaker.wave.2.fill").foregroundStyle(MColor.coralInk).frame(width: 44, height: 44)
                                     }
                                     .accessibilityLabel("\(phrase.phrase)を聞く")
                                 }
@@ -64,7 +75,7 @@ struct FeedbackView: View {
                     }
                     if !session.turns.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("会話の記録").font(.headline)
+                            Text("会話の記録").font(.mRounded(.headline))
                             ForEach(session.turns) { turn in
                                 TranscriptBubble(utterance: Utterance(
                                     id: turn.id, speaker: turn.speaker, text: turn.text, state: .final,
@@ -113,10 +124,10 @@ struct FeedbackView: View {
 
     private func correction(_ index: Int, _ item: ReviewCorrection) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("\(index)  \(item.tag)").font(.caption.weight(.semibold)).foregroundStyle(MColor.amber)
-            Text("あなた").font(.caption2).foregroundStyle(MColor.inkTertiary)
+            Text("\(index)  \(item.tag)").font(.system(.caption, design: .rounded, weight: .bold)).foregroundStyle(MColor.hintInk)
+            Text("あなた").font(.caption2.weight(.semibold)).foregroundStyle(MColor.user)
             Text(item.original).font(.callout)
-            Text("こう").font(.caption2).foregroundStyle(MColor.green)
+            Text("こう言うと伝わる").font(.caption2.weight(.semibold)).foregroundStyle(MColor.coralInk)
             Text(item.better).font(.callout.bold())
             Text(item.reasonJa).font(.footnote).foregroundStyle(MColor.inkSecondary)
         }
@@ -146,10 +157,11 @@ struct TotalScoreHero: View {
                 Circle().stroke(MColor.fill, lineWidth: 14)
                 Circle()
                     .trim(from: 0, to: CGFloat(shown) / 100)
-                    .stroke(MColor.green, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                    .stroke(MColor.communication, style: StrokeStyle(lineWidth: 14, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 Text("\(shown)")
                     .font(.mTotalScore(size: size))
+                    .foregroundStyle(MColor.ink)
                     .contentTransition(.numericText())
             }
             .frame(width: 220, height: 220)
@@ -157,8 +169,11 @@ struct TotalScoreHero: View {
             Text("総合点").font(.caption).foregroundStyle(MColor.inkSecondary)
             if let delta {
                 Text(deltaLabel(delta))
-                    .font(.headline)
-                    .foregroundStyle(delta < 0 ? MColor.inkSecondary : MColor.green)
+                    .font(.mRounded(.subheadline))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .foregroundStyle(delta < 0 ? MColor.inkSecondary : MColor.success)
+                    .background(MColor.fill, in: Capsule())
             }
         }
         .onAppear {
@@ -185,12 +200,12 @@ struct SubScoreTile: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(axis.title).font(.caption).foregroundStyle(MColor.inkSecondary)
             Text("×\(Int(axis.weight * 100))%").font(.caption2).foregroundStyle(MColor.inkTertiary)
-            Text("\(value)").font(.title2.bold()).monospacedDigit()
+            Text("\(value)").font(.mRounded(.title2)).monospacedDigit()
             Capsule().fill(axis.color).frame(width: CGFloat(value) * 0.7, height: 4)
             if let delta {
                 Text(delta > 0 ? "+\(delta)" : (delta < 0 ? "−\(abs(delta))" : "±0"))
-                    .font(.caption2)
-                    .foregroundStyle(delta < 0 ? MColor.inkSecondary : MColor.green)
+                    .font(.system(.caption2, design: .rounded, weight: .bold))
+                    .foregroundStyle(delta < 0 ? MColor.inkSecondary : MColor.success)
             }
         }
         .padding(12)

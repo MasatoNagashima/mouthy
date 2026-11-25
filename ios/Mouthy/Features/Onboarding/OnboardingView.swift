@@ -14,11 +14,12 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             if step > 0 {
                 ProgressView(value: Double(step), total: 2)
-                    .tint(MColor.green)
+                    .tint(MColor.coral)
                     .padding(.horizontal, MSpace.l)
                     .padding(.top, 8)
                 Text("\(step)/2")
-                    .font(.caption.weight(.semibold))
+                    .font(.system(.caption, design: .rounded, weight: .bold))
+                    .monospacedDigit()
                     .foregroundStyle(MColor.inkSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, MSpace.l)
@@ -63,7 +64,7 @@ struct OnboardingView: View {
     private var goals: some View {
         VStack(alignment: .leading, spacing: MSpace.l) {
             Text("英語で話したいのは\nどんな場面ですか？")
-                .font(.title.bold())
+                .font(.system(.title, design: .rounded, weight: .heavy))
             Text("おすすめのシーンを選ぶのに使います。あとで変えられます。")
                 .font(.callout)
                 .foregroundStyle(MColor.inkSecondary)
@@ -73,7 +74,7 @@ struct OnboardingView: View {
                 }
             }
             Text("TOEICの目安")
-                .font(.headline)
+                .font(.mRounded(.headline))
             Text("L&Rの点数で大丈夫です。受けていなければ「なし」を選んでください。")
                 .font(.footnote)
                 .foregroundStyle(MColor.inkSecondary)
@@ -87,10 +88,16 @@ struct OnboardingView: View {
 
     private var consent: some View {
         VStack(alignment: .leading, spacing: MSpace.l) {
-            Text("声で会話します")
-                .font(.title.bold())
-            Text("はじめる前に、音声の扱いを確認してください。")
-                .foregroundStyle(MColor.inkSecondary)
+            VStack(spacing: 8) {
+                PakuBadge(expression: .listen, size: 132)
+                    .padding(.bottom, 10)
+                Text("声で会話します")
+                    .font(.system(.title, design: .rounded, weight: .heavy))
+                Text("はじめる前に、音声の扱いを確認してください。")
+                    .foregroundStyle(MColor.inkSecondary)
+            }
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
             consentRow("waveform", "音声は会話中だけ送信", "あなたの声は、AIの応答のために音声AI事業者（OpenAI 仮）に送られます。")
             consentRow("mic.slash", "録音は保存しません", "既定では録音を残しません。残るのは文字起こしとスコアだけです。")
             consentRow("trash", "いつでも削除できます", "設定から、履歴の書き出しとアカウントの削除ができます。")
@@ -99,7 +106,7 @@ struct OnboardingView: View {
             } label: {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: agreed ? "checkmark.square.fill" : "square")
-                        .foregroundStyle(MColor.green)
+                        .foregroundStyle(MColor.coralInk)
                     Text("内容を確認し、プライバシーポリシーに同意します")
                         .font(.callout)
                         .foregroundStyle(MColor.ink)
@@ -127,9 +134,12 @@ struct OnboardingView: View {
 
     private func consentRow(_ symbol: String, _ title: String, _ body: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol).foregroundStyle(MColor.apricot).frame(width: 28)
+            Image(systemName: symbol)
+                .foregroundStyle(MColor.coralInk)
+                .frame(width: 36, height: 36)
+                .background(MColor.tintCoral, in: Circle())
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.headline)
+                Text(title).font(.mRounded(.headline))
                 Text(body).font(.footnote).foregroundStyle(MColor.inkSecondary)
             }
         }
@@ -138,8 +148,29 @@ struct OnboardingView: View {
     private func choiceGrid(_ titles: [String], selected: String, onSelect: @escaping (String) -> Void) -> some View {
         VStack(spacing: 8) {
             ForEach(titles, id: \.self) { title in
-                Button(title) { onSelect(title) }
-                    .buttonStyle(MouthyButtonStyle(kind: title == selected ? .primary : .secondary))
+                let isSelected = title == selected
+                Button { onSelect(title) } label: {
+                    HStack {
+                        Text(title)
+                            .font(.body.weight(isSelected ? .semibold : .regular))
+                            .foregroundStyle(MColor.ink)
+                        Spacer()
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(MColor.coralInk)
+                        }
+                    }
+                    .padding(.horizontal, MSpace.l)
+                    .frame(height: 48)
+                    .background(isSelected ? MColor.tintCoral : MColor.surface, in: RoundedRectangle(cornerRadius: MRadius.list, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: MRadius.list, style: .continuous)
+                            .strokeBorder(isSelected ? MColor.coralInk : MColor.line, lineWidth: isSelected ? 2 : 1)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: MRadius.list, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
     }
@@ -176,15 +207,22 @@ struct DiagnosisResultView: View {
         let start = ProgressMath.startPoint(total: session.total)
         ScrollView {
             VStack(alignment: .leading, spacing: MSpace.l) {
-                Text("診断が終わりました")
-                    .font(.largeTitle.bold())
-                Text("あなたのスタート地点")
-                    .font(.headline)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("推定").font(.headline)
-                    Text(start.cefr).font(.system(size: 44, weight: .bold, design: .rounded))
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("診断が終わりました")
+                            .font(.subheadline)
+                            .foregroundStyle(MColor.inkSecondary)
+                        Text("あなたのスタート地点")
+                            .font(.system(.title, design: .rounded, weight: .heavy))
+                    }
+                    Spacer()
+                    PakuView(expression: .cheer, width: 76)
                 }
-                Text(start.message).font(.title3.bold())
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("推定").font(.mRounded(.headline))
+                    Text(start.cefr).font(.system(size: 44, weight: .heavy, design: .rounded)).foregroundStyle(MColor.coralInk)
+                }
+                Text(start.message).font(.mRounded(.title3))
                 Text("いまの力に合った、答えやすいシーンからおすすめします。")
                     .foregroundStyle(MColor.inkSecondary)
                 HStack(spacing: 8) {
@@ -195,11 +233,11 @@ struct DiagnosisResultView: View {
                 if let wpm = session.speakingWpm {
                     Text("発話中WPM  \(wpm) 語/分").font(.footnote).foregroundStyle(MColor.inkSecondary)
                 }
-                Text("最初のおすすめ").font(.headline)
+                Text("最初のおすすめ").font(.mRounded(.headline))
                 ForEach(recommendations, id: \.id) { scene in
                     HStack {
                         VStack(alignment: .leading) {
-                            Text(scene.title).font(.headline)
+                            Text(scene.title).font(.mRounded(.headline))
                             Text("\(scene.category.title) · 5分").font(.caption).foregroundStyle(MColor.inkSecondary)
                         }
                         Spacer()
@@ -231,9 +269,12 @@ struct DiagnosisResultView: View {
 
     private func scoreTile(_ axis: ScoreAxis, _ value: Int) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(axis.title).font(.caption).foregroundStyle(MColor.inkSecondary)
+            HStack(spacing: 4) {
+                Circle().fill(axis.color).frame(width: 8, height: 8)
+                Text(axis.title).font(.caption).foregroundStyle(MColor.inkSecondary)
+            }
             Text("×\(Int(axis.weight * 100))%").font(.caption2).foregroundStyle(MColor.inkTertiary)
-            Text("\(value)").font(.title2.bold()).monospacedDigit()
+            Text("\(value)").font(.mRounded(.title2)).monospacedDigit()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)

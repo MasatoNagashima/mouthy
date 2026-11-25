@@ -1,13 +1,30 @@
 import SwiftUI
 
+/// v0.7 tokens (パク R1 コーラル). Values live in Assets.xcassets (light / dark).
+/// Coral (#FF6A58) is for fills only; use `coralInk` for coral-colored text.
 enum MColor {
-    static let green = Color("brand.green")
-    static let apricot = Color("brand.apricot")
-    static let apricotInk = Color("brand.apricotInk")
-    static let amber = Color("hint.amber")
+    // Brand (Paku)
+    static let coral = Color("brand.coral")
+    static let coralShade = Color("brand.coralShade")
+    static let coralInk = Color("brand.coralInk")
+    static let tintCoral = Color("tint.coral")
+    static let onCoral = Color("on.coral")
+    // Speakers
+    static let roleAI = coral
+    static let user = Color("role.user")
+    static let tintUser = Color("tint.user")
+    // Accent / hints
+    static let sun = Color("accent.sun")
+    static let hintInk = Color("hint.ink")
+    static let tintHint = Color("tint.hint")
+    // Scores
+    static let communication = coral
     static let fluency = Color("score.fluency")
     static let accuracy = Color("score.accuracy")
+    // Status
+    static let success = Color("status.success")
     static let danger = Color("status.danger")
+    // Surfaces & ink
     static let bg = Color("bg.base")
     static let surface = Color("bg.surface")
     static let fill = Color("bg.fill")
@@ -15,10 +32,6 @@ enum MColor {
     static let ink = Color("ink.primary")
     static let inkSecondary = Color("ink.secondary")
     static let inkTertiary = Color("ink.tertiary")
-    static let tintGreen = Color("tint.green")
-    static let tintApricot = Color("tint.apricot")
-    static let tintAmber = Color("tint.amber")
-    static let onGreen = Color("on.green")
 }
 
 enum MSpace {
@@ -35,7 +48,7 @@ enum MRadius {
     static let day: CGFloat = 10
     static let list: CGFloat = 14
     static let button: CGFloat = 16
-    static let card: CGFloat = 20
+    static let card: CGFloat = 22
 }
 
 enum ScoreAxis: CaseIterable, Identifiable {
@@ -57,7 +70,7 @@ enum ScoreAxis: CaseIterable, Identifiable {
     }
     var color: Color {
         switch self {
-        case .communication: return MColor.green
+        case .communication: return MColor.communication
         case .fluency: return MColor.fluency
         case .accuracy: return MColor.accuracy
         }
@@ -68,6 +81,11 @@ extension Font {
     static func mTotalScore(size: CGFloat) -> Font {
         .system(size: size, weight: .bold, design: .rounded).monospacedDigit()
     }
+
+    /// SF Pro Rounded for headings, numbers, buttons and tabs.
+    static func mRounded(_ style: Font.TextStyle, weight: Font.Weight = .bold) -> Font {
+        .system(style, design: .rounded, weight: weight)
+    }
 }
 
 struct MouthyButtonStyle: ButtonStyle {
@@ -77,7 +95,7 @@ struct MouthyButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.headline)
+            .font(.system(.headline, design: .rounded, weight: .bold))
             .frame(maxWidth: .infinity)
             .frame(height: 54)
             .foregroundStyle(foreground)
@@ -89,14 +107,15 @@ struct MouthyButtonStyle: ButtonStyle {
 
     private var foreground: Color {
         switch kind {
-        case .primary: return MColor.onGreen
-        case .secondary, .ghost: return MColor.ink
+        case .primary: return MColor.onCoral
+        case .secondary: return MColor.ink
+        case .ghost: return MColor.coralInk
         }
     }
 
     private var background: Color {
         switch kind {
-        case .primary: return MColor.green
+        case .primary: return MColor.coral
         case .secondary: return MColor.surface
         case .ghost: return .clear
         }
@@ -113,11 +132,11 @@ struct LevelBadge: View {
 
     var body: some View {
         Text(comingSoon ? "近日公開" : "Lv\(level)")
-            .font(.caption.weight(.semibold))
+            .font(.system(.caption, design: .rounded, weight: .bold))
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .foregroundStyle(comingSoon ? MColor.inkTertiary : MColor.green)
-            .background(comingSoon ? MColor.fill : MColor.tintGreen, in: Capsule())
+            .foregroundStyle(comingSoon ? MColor.inkTertiary : MColor.coralInk)
+            .background(comingSoon ? MColor.fill : MColor.tintCoral, in: Capsule())
     }
 }
 

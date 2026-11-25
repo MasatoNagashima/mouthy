@@ -23,6 +23,7 @@ struct RecordsView: View {
                 let items = model.filteredSessions(filter: filter)
                 if items.isEmpty {
                     VStack(spacing: MSpace.m) {
+                        PakuView(expression: .hello, width: 120)
                         Text("最初の会話をすると、ここに添削結果が並びます。")
                             .multilineTextAlignment(.center)
                             .foregroundStyle(MColor.inkSecondary)
@@ -81,11 +82,12 @@ struct RecordsView: View {
 
     private func filterChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(title, action: action)
-            .font(.footnote.weight(.semibold))
-            .padding(.horizontal, 12)
+            .font(.system(.footnote, design: .rounded, weight: .bold))
+            .padding(.horizontal, 14)
             .frame(height: 36)
-            .foregroundStyle(selected ? MColor.onGreen : MColor.ink)
-            .background(selected ? MColor.green : MColor.fill, in: Capsule())
+            .foregroundStyle(selected ? MColor.onCoral : MColor.ink)
+            .background(selected ? MColor.coral : MColor.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(selected ? Color.clear : MColor.line, lineWidth: 1))
     }
 }
 
@@ -96,7 +98,7 @@ struct CorrectionRow: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(session.sceneTitle).font(.headline)
+                    Text(session.sceneTitle).font(.mRounded(.headline))
                     LevelBadge(level: session.level)
                 }
                 Text("\(clock) · \(max(1, session.durationSec / 60))分")
@@ -109,7 +111,7 @@ struct CorrectionRow: View {
             Spacer()
             VStack(alignment: .trailing) {
                 Text("総合点").font(.caption2).foregroundStyle(MColor.inkSecondary)
-                Text("\(session.total)").font(.title2.bold()).monospacedDigit()
+                Text("\(session.total)").font(.mRounded(.title2)).monospacedDigit().foregroundStyle(MColor.ink)
             }
         }
         .padding(.vertical, 4)
