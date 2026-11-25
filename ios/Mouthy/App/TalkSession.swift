@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Observation
 import MouthyLogic
@@ -32,6 +33,8 @@ final class TalkSession {
     var usingScript = false
     var audioLevel: Double = 0
     var notice: String?
+    /// 音声の状態（STG の検証用）。マイク送信量・AI 音声の受信量・エンジンの状態を1秒ごとに出す。
+    var audioDebug: String?
     private let launch: TalkLaunch
     private let settings: AppSettings
     private let previous: PracticeSession?
@@ -189,30 +192,45 @@ final class TalkSession {
             audio.stop()
         }
         do {
+            // マイクの許可を先に確かめる。許可がないとマイクは無音になり、話しても認識されない。
+            var micAllowed = AVAudioApplication.shared.recordPermission == .granted
+            if AVAudioApplication.shared.recordPermission == .undetermined {
+                micAllowed = await AVAudioApplication.requestRecordPermission()
+            }
+            if !micAllowed {
+                notice = "マイクがオフになっています。iPhoneの「設定」>「Mouthy STG」でマイクをオンにしてください。"
+            }
             let minted = try await api.mint(scene: launch.scene, settings: settings, phrases: [])
             let live = RealtimeSocket(token: minted.token, model: minted.model)
             socket = live
-            try await live.connect()
-            phase = .aiSpeaking
             // マイクの音は1本の列に積んで、届いた順に送る（Task をばらばらに作ると順番が入れ替わる）。
             let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
             chunks = continuation
+            // 先に音声を用意してから接続する（AI の最初の声を取りこぼさない）。
+            do {
+                try audio.start(onLevel: { [weak self] level in
+                    Task { @MainActor in self?.audioLevel = level }
+                }, onPCM: { data in
+                    continuation.yield(data)
+                })
+            } catch {
+                throw TalkAudioStartError(detail: error.localizedDescription)
+            }
+            audioDebug = audio.healthCheck()
+            try await live.connect()
+            phase = .aiSpeaking
             sender = Task { [weak self] in
                 for await chunk in stream {
                     if self?.phase == .paused { continue }
                     await live.appendAudio(chunk)
                 }
             }
-            try audio.start(onLevel: { [weak self] level in
-                Task { @MainActor in self?.audioLevel = level }
-            }, onPCM: { data in
-                continuation.yield(data)
-            })
             let deadline = Date().addingTimeInterval(TimeInterval(remainingSec))
             ticker = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard let self else { return }
+                    self.audioDebug = audio.healthCheck()
                     self.remainingSec = max(0, Int(deadline.timeIntervalSinceNow.rounded(.up)))
                     if self.remainingSec == 0 || self.ended {
                         await live.close()
@@ -362,3 +380,8 @@ final class TalkSession {
 }
 
 enum OrbSpeaker { case ai, learner, idle, thinking }
+
+struct TalkAudioStartError: LocalizedError {
+    var detail: String
+    var errorDescription: String? { "マイクとスピーカーを使えませんでした（\(detail)）。" }
+}
